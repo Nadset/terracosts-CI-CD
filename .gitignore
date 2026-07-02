@@ -1,0 +1,48 @@
+__pycache__/
+*.pyc
+# Ignorer l'application FastAPI complète
+app/
+intelligence/
+web/
+
+# Ignorer les scripts sensibles locaux (comme finops_gating.py s'il est dans le répertoire)
+# Note : S'il est stocké dans /home/terracosts-pro/scripts/, il est déjà en dehors du dépôt, donc sécurisé.
+*.pyc
+__pycache__/
+
+# Ignorer les fichiers de configuration locaux et variables d'environnement
+.env
+.env.*
+terraform/.terraform/
+*.tfstate
+*.tfstate.*
+plan.json
+tfplan.binary
+
+.bash_history
+.viminfo
+.config/
+
+# --- DevOps CI/CD Agents ---
+actions-runner/
+myagent/
+Azure/
+
+# --- Database Backups ---
+Backup/
+*.sql
+
+# --- Python Application Local (Hier soir) ---
+app/
+intelligence/
+__pycache__/
+*.pyc
+.env
+.env.*
+
+# --- Terraform Local State ---
+.terraform/
+*.tfstate
+*.tfstate.*
+plan.json
+tfplan.binary
