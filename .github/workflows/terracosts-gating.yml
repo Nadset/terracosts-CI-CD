@@ -131,8 +131,12 @@ jobs:
         run: |
           echo "Executing production FinOps analysis for ${{ matrix.project_name }} [Cloud: ${{ matrix.provider }}]..."
 
+          # On force la variable d'environnement directement dans la ligne d'exécution
+          # et on retire l'argument --engine qui faisait crasher argparse
+          export EXECUTOR_ENGINE="github_actions"
+          export CI_PLATFORM="github_actions"
+
           python3 /home/terracosts-pro/scripts/finops_gating.py \
             --plan "${{ github.workspace }}/${{ matrix.plan_path }}" \
             --project "${{ matrix.project_name }}" \
-            --provider "${{ matrix.provider }}" \
-            --engine "github_actions"
+            --provider "${{ matrix.provider }}"
