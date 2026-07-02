@@ -120,22 +120,23 @@ jobs:
           # Utilisation de ton URL de production par défaut
           TERRACOSTS_API_URL: 'https://api.terracosts.com'
           FINOPS_STRICT_MODE: 'true'
-          
+
           # Dynamic routing targeting: maps to the triggering DevOps engineer email automatically
           DEVOPS_TEAM_EMAIL: ${{ github.actor }}@yourenterprisebusiness.com
           # Placeholder cost parameter - can be hooked up to an automated calculator parse engine
           TERRAFORM_COST_DELTA: "75.00"
-          
+
           # Forçage des variables d'environnement pour la détection de l'Execution Engine
           TF_BUILD: "false"
           GITHUB_ACTIONS: "true"
-          
+
           # Injection du hook prioritaire au démarrage de Python
           PYTHONPATH: "${{ github.workspace }}/patch"
         run: |
           echo "Executing production FinOps analysis for ${{ matrix.project_name }} [Cloud: ${{ matrix.provider }}]..."
-          
+
           python3 /home/terracosts-pro/scripts/finops_gating.py \
             --plan "${{ github.workspace }}/${{ matrix.plan_path }}" \
             --project "${{ matrix.project_name }}" \
-            --provider "${{ matrix.provider }}"
+            --provider "${{ matrix.provider }}" \
+            --engine "github_actions"
