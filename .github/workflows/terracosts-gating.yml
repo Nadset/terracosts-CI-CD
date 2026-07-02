@@ -1,15 +1,11 @@
 name: TerraCosts FinOps CI/CD Gating
 
 on:
-  pull_request:
-    branches: [ main, develop ]
-    paths:
-      - 'terraform/**' # Trigger pipeline exclusively when Terraform infrastructure code changes
+  workflow_dispatch:
   push:
     branches: [ main ]
     paths:
       - 'terraform/**'
-
 jobs:
   finops-gating:
     name: Multi-Cloud Budget & Tag Governance

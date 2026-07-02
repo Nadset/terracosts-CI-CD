@@ -42,3 +42,4 @@ resource "google_storage_bucket" "gcp_test_bucket" {
 }
 # TerraCosts Gating Full Matrix Test
 # Triggering FinOps Gating Review
+# Manual dispatch activation run
