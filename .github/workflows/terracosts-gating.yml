@@ -126,6 +126,8 @@ jobs:
         run: |
           echo "Executing production FinOps analysis for ${{ matrix.project_name }} [Cloud: ${{ matrix.provider }}]..."
 
+          # Injection directe et propre de la valeur attendue par le script
+          CI_PLATFORM="github" \
           python3 /home/terracosts-pro/scripts/finops_gating.py \
             --plan "${{ github.workspace }}/${{ matrix.plan_path }}" \
             --project "${{ matrix.project_name }}" \
