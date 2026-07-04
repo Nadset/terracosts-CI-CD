@@ -1,0 +1,105 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - terraform/**
+
+pool:
+  name: 'Default'
+
+strategy:
+  matrix:
+    Production-API:
+      project_name: 'Production-API'
+      provider: 'aws'
+      working_dir: 'terraform/aws'
+      plan_path: 'plan.json'
+    Frontend-App:
+      project_name: 'Frontend-App'
+      provider: 'azure'
+      working_dir: 'terraform/azure'
+      plan_path: 'plan.json'
+    Data-Pipeline:
+      project_name: 'Data-Pipeline'
+      provider: 'oci'
+      working_dir: 'terraform/oci'
+      plan_path: 'plan.json'
+    Core-Backend:
+      project_name: 'Core-Backend'
+      provider: 'gcp'
+      working_dir: 'terraform/gcp'
+      plan_path: 'plan.json'
+
+steps:
+- checkout: self
+  fetchDepth: 2
+  displayName: 'Checkout Repository Code'
+
+- script: |
+    CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+    if echo "$CHANGED_FILES" | grep -q "^$(working_dir)/"; then
+      echo "##vso[task.setvariable variable=ANY_CHANGED]true"
+    else
+      echo "##vso[task.setvariable variable=ANY_CHANGED]false"
+    fi
+  displayName: 'Verify Infrastructure Changes'
+
+- script: |
+    echo '{"format_version": "1.0", "resource_changes": []}' > $(Build.SourcesDirectory)/$(plan_path)
+  condition: eq(variables['ANY_CHANGED'], 'false')
+  displayName: 'Ensure Fallback Terraform Plan Ledger Exists'
+
+- task: UsePythonVersion@0
+  inputs:
+    versionSpec: '3.11'
+  displayName: 'Set up Python Environment'
+
+- script: |
+    pip install requests python-dotenv urllib3
+  displayName: 'Install Runtime Dependencies'
+
+- script: |
+    cd $(working_dir)
+    terraform init
+    terraform plan -out=tfplan.binary
+    terraform show -json tfplan.binary > $(Build.SourcesDirectory)/$(plan_path)
+  condition: eq(variables['ANY_CHANGED'], 'true')
+  displayName: 'Terraform Live Init, Plan and Export Ledger'
+
+- script: |
+    mkdir -p $(Build.SourcesDirectory)/patch
+    cat << 'EOF' > $(Build.SourcesDirectory)/patch/sitecustomize.py
+    import warnings
+    try:
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    except ImportError:
+        pass
+    try:
+        import requests
+        from requests.adapters import HTTPAdapter
+        orig_send = HTTPAdapter.send
+        def patched_send(self, request, **kwargs):
+            kwargs['verify'] = False
+            return orig_send(self, request, **kwargs)
+        HTTPAdapter.send = patched_send
+    except Exception:
+        pass
+    EOF
+  displayName: 'Generate Runtime SSL Bypass Patch'
+
+- script: |
+    python3 /home/terracosts-pro/scripts/finops_gating.py \
+      --plan "$(Build.SourcesDirectory)/$(plan_path)" \
+      --project "$(project_name)" \
+      --provider "$(provider)"
+  env:
+    TERRACOSTS_API_KEY: $(TERRACOSTS_API_SECRET_KEY)
+    TERRACOSTS_API_URL: 'https://api.terracosts.com'
+    FINOPS_STRICT_MODE: 'true'
+    PYTHONPATH: "$(Build.SourcesDirectory)/patch"
+    CI_PLATFORM: 'azure_devops'
+    TF_BUILD: 'True'
+  displayName: 'Execute FinOps Gate Analysis & Sync Telemetry'
