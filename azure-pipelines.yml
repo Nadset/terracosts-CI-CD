@@ -51,11 +51,11 @@ steps:
   condition: eq(variables['ANY_CHANGED'], 'false')
   displayName: 'Ensure Fallback Terraform Plan Ledger Exists'
 
-# Remplacement de la tâche plantée : Utilisation directe de pip3 système
+# Correction majeure : Isolation de l'installation dans l'espace utilisateur local de l'agent
 - script: |
-    python3 -m pip install --upgrade pip
-    python3 -m pip install requests python-dotenv urllib3
-  displayName: 'Install Runtime Dependencies (System Python)'
+    echo "Installing requirements into local user space..."
+    pip3 install --user requests python-dotenv urllib3 || python3 -m pip install --user requests python-dotenv urllib3
+  displayName: 'Install Runtime Dependencies (Isolated Local Pip)'
 
 - script: |
     cd $(working_dir)
