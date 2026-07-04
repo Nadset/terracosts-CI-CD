@@ -51,14 +51,11 @@ steps:
   condition: eq(variables['ANY_CHANGED'], 'false')
   displayName: 'Ensure Fallback Terraform Plan Ledger Exists'
 
-- task: UsePythonVersion@0
-  inputs:
-    versionSpec: '3.11'
-  displayName: 'Set up Python Environment'
-
+# Remplacement de la tâche plantée : Utilisation directe de pip3 système
 - script: |
-    pip install requests python-dotenv urllib3
-  displayName: 'Install Runtime Dependencies'
+    python3 -m pip install --upgrade pip
+    python3 -m pip install requests python-dotenv urllib3
+  displayName: 'Install Runtime Dependencies (System Python)'
 
 - script: |
     cd $(working_dir)
