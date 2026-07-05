@@ -106,20 +106,22 @@ jobs:
       # 🛡️ Governance Execution and API Telemetry Synchronization
       - name: Execute FinOps Gate Analysis & Sync Telemetry
         env:
-          TERRACOSTS_API_KEY: ${{ secrets.TERRACOSTS_API_SECRET_KEY || secrets.TERRACOSTS_API_KEY }}
-          TERRACOSTS_API_URL: 'http://127.0.0.1:8000'
+          # On passe ton vrai Token JWT valide extrait de Jenkins
+          TERRACOSTS_API_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJuYWRlci5zZXRheWVzaEBob3RtYWlsLmNvbSIsInVzZXJfaWQiOjEsInBsYW4iOiJlbnRlcnByaXNlIiwiZXhwIjoxNzgzMjg4MzQ3LCJpYXQiOjE3ODMyMDE5NDcsImlzcyI6IlRlcnJhQ29zdHMtU2FhUyJ9.mSItEsINrl5MhUoFIsGCRyAdNUys2Q0FZja9-Mn1mXM"
           FINOPS_STRICT_MODE: 'true'
           PYTHONPATH: "${{ github.workspace }}/patch"
           CI_PLATFORM: "github"
           GITHUB_ACTIONS: "true"
-          # 🚀 PARADE ABSOLUE : Dit à la librairie requests d'ignorer tout proxy pour le trafic local
-          NO_PROXY: "127.0.0.1,localhost"
+          # On vire TERRACOSTS_API_URL pour laisser le script utiliser localhost ou on force l'adresse de l'hôte principal
+          NO_PROXY: "*"
           HTTP_PROXY: ""
           HTTPS_PROXY: ""
         run: |
           echo "Executing production FinOps analysis for ${{ matrix.project_name }} [Cloud: ${{ matrix.provider }}]..."
 
-          python3 /home/terracosts-pro/scripts/finops_gating.py \
-            --plan "${{ github.workspace }}/${{ matrix.plan_path }}" \
-            --project "${{ matrix.project_name }}" \
-            --provider "${{ matrix.provider }}"
+          # Test séquentiel : si l'API par défaut échoue à cause de l'isolation du conteneur, on teste via la passerelle de l'hôte
+          if ! python3 /home/terracosts-pro/scripts/finops_gating.py --plan "${{ github.workspace }}/${{ matrix.plan_path }}" --project "${{ matrix.project_name }}" --provider "${{ matrix.provider }}"; then
+             echo "Retrying via Host Gateway network bridge..."
+             export TERRACOSTS_API_URL="http://172.17.0.1:8000" # IP par défaut du pont Docker de la machine
+             python3 /home/terracosts-pro/scripts/finops_gating.py --plan "${{ github.workspace }}/${{ matrix.plan_path }}" --project "${{ matrix.project_name }}" --provider "${{ matrix.provider }}"
+          fi
