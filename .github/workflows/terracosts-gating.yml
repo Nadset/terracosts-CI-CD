@@ -49,7 +49,7 @@ jobs:
         if: steps.changed-files.outputs.any_changed == 'false'
         run: |
           echo "No changes detected for ${{ matrix.provider }}. Generating a fallback mock structure..."
-          echo '{"format_version": "1.0", "resource_changes": []}' > ${{ github.workspace }}/${{ matrix.plan_path }}
+          echo '{"format_version": "1.0", "planned_values": {"root_module": {"resources": []}}}' > ${{ github.workspace }}/${{ matrix.plan_path }}
 
       - name: Load Environment Variables from .env
         run: |
@@ -107,16 +107,14 @@ jobs:
       - name: Execute FinOps Gate Analysis & Sync Telemetry
         env:
           TERRACOSTS_API_KEY: ${{ secrets.TERRACOSTS_API_SECRET_KEY || secrets.TERRACOSTS_API_KEY }}
-          TERRACOSTS_API_URL: 'https://api.terracosts.com'
+          TERRACOSTS_API_URL: 'https://terracosts.com'
           FINOPS_STRICT_MODE: 'true'
           PYTHONPATH: "${{ github.workspace }}/patch"
+          CI_PLATFORM: "github"
+          GITHUB_ACTIONS: "true"
         run: |
           echo "Executing production FinOps analysis for ${{ matrix.project_name }} [Cloud: ${{ matrix.provider }}]..."
           
-          # Force l'écriture de l'origine dans un fichier .env local pour court-circuiter les restrictions du Runner
-          echo "CI_PLATFORM=github" > ${{ github.workspace }}/.env
-          echo "GITHUB_ACTIONS=true" >> ${{ github.workspace }}/.env
-
           python3 /home/terracosts-pro/scripts/finops_gating.py \
             --plan "${{ github.workspace }}/${{ matrix.plan_path }}" \
             --project "${{ matrix.project_name }}" \
