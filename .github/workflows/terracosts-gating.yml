@@ -107,11 +107,15 @@ jobs:
       - name: Execute FinOps Gate Analysis & Sync Telemetry
         env:
           TERRACOSTS_API_KEY: ${{ secrets.TERRACOSTS_API_SECRET_KEY || secrets.TERRACOSTS_API_KEY }}
-          TERRACOSTS_API_URL: 'http://127.0.0.1:8000' # Fix: évite Jenkins en tapant directement FastAPI sur le VPS
+          TERRACOSTS_API_URL: 'http://127.0.0.1:8000'
           FINOPS_STRICT_MODE: 'true'
           PYTHONPATH: "${{ github.workspace }}/patch"
           CI_PLATFORM: "github"
           GITHUB_ACTIONS: "true"
+          # 🚀 PARADE ABSOLUE : Dit à la librairie requests d'ignorer tout proxy pour le trafic local
+          NO_PROXY: "127.0.0.1,localhost"
+          HTTP_PROXY: ""
+          HTTPS_PROXY: ""
         run: |
           echo "Executing production FinOps analysis for ${{ matrix.project_name }} [Cloud: ${{ matrix.provider }}]..."
 
