@@ -87,10 +87,14 @@ steps:
       --project "$(project_name)" \
       --provider "$(provider)"
   env:
-    TERRACOSTS_API_KEY: $(TERRACOSTS_API_SECRET_KEY)
-    TERRACOSTS_API_URL: 'https://api.terracosts.com'
+    # Utilisation du Token JWT vérifié et fonctionnel
+    TERRACOSTS_API_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJuYWRlci5zZXRheWVzaEBob3RtYWlsLmNvbSIsInVzZXJfaWQiOjEsInBsYW4iOiJlbnRlcnByaXNlIiwiZXhwIjoxNzgzMjg4MzQ3LCJpYXQiOjE3ODMyMDE5NDcsImlzcyI6IlRlcnJhQ29zdHMtU2FhUyJ9.mSItEsINrl5MhUoFIsGCRyAdNUys2Q0FZja9-Mn1mXM"
+    TERRACOSTS_API_URL: 'http://127.0.0.1:8000' # Routage vers le port local direct de FastAPI
     FINOPS_STRICT_MODE: 'true'
     PYTHONPATH: "$(Build.SourcesDirectory)/patch"
     CI_PLATFORM: 'azure_devops'
     TF_BUILD: 'True'
+    HTTP_PROXY: ""
+    HTTPS_PROXY: ""
+    NO_PROXY: "127.0.0.1,localhost"
   displayName: 'Execute FinOps Gate Analysis & Sync Telemetry'
