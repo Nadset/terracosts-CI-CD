@@ -13,22 +13,22 @@ strategy:
   matrix:
     Production-API:
       project_name: 'Production-API'
-      provider: 'Nader1'
+      provider: 'aws'
       working_dir: 'terraform/aws'
       plan_path: 'plan.json'
     Frontend-App:
       project_name: 'Frontend-App'
-      provider: 'Nader2'
+      provider: 'azure'
       working_dir: 'terraform/azure'
       plan_path: 'plan.json'
     Data-Pipeline:
       project_name: 'Data-Pipeline'
-      provider: 'Nader3'
+      provider: 'oci'
       working_dir: 'terraform/oci'
       plan_path: 'plan.json'
     Core-Backend:
       project_name: 'Core-Backend'
-      provider: 'Nader4'
+      provider: 'gcp'
       working_dir: 'terraform/gcp'
       plan_path: 'plan.json'
 
