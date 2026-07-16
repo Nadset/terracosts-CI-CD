@@ -19,7 +19,6 @@ def detect_ci_platform():
     Auto-détecte le moteur/plateforme d'exécution CI/CD pour la télémétrie FinOps.
     Gère GitHub Actions, AWS CodeBuild, Azure DevOps, Jenkins, GCP Cloud Build et OCI DevOps.
     """
-    # 🔍 LOGS DE DIAGNOSTIC AVANT DETECTION
     logger.info("======= DEBUG CI DETECTION =======")
     logger.info(f"CWD actuel : {os.getcwd()}")
     logger.info(f"Variable GITHUB_ACTIONS : {os.environ.get('GITHUB_ACTIONS')}")
@@ -30,16 +29,16 @@ def detect_ci_platform():
     logger.info(f"Variable CODEBUILD_BUILD_ID : {os.environ.get('CODEBUILD_BUILD_ID')}")
     logger.info("==================================")
 
-    # 1. Détection prioritaire par variables d'environnement explicites ou pures
+    # 1. Détection prioritaire par variables d'environnement explicites
     if os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("CI_PLATFORM") in ["github", "github_actions"]:
         return "github_actions"
-    
+
     if os.environ.get("CODEBUILD_BUILD_ID") is not None or os.environ.get("CI_PLATFORM") in ["aws_codebuild", "codebuild"]:
         return "aws_codebuild"
-        
+
     if os.environ.get("TF_BUILD") == "True" or os.environ.get("CI_PLATFORM") == "azure_devops":
         return "azure_devops"
-        
+
     if os.environ.get("JENKINS_URL") is not None or os.environ.get("CI_PLATFORM") == "jenkins":
         return "jenkins"
 
@@ -74,7 +73,7 @@ def detect_ci_platform():
     except Exception:
         pass
 
-    # 4. Fallback direct sur la variable explicite si elle existe
+    # 4. Fallback direct sur la variable explicite
     explicit_platform = os.environ.get("CI_PLATFORM") or os.environ.get("EXECUTOR_ENGINE")
     if explicit_platform:
         return explicit_platform
@@ -82,12 +81,10 @@ def detect_ci_platform():
     return "unknown"
 
 def get_git_branch():
-    # CODEBUILD_SOURCE_VERSION contient souvent la branche (ex: refs/heads/main ou juste main)
     ci_env_vars = ["GITHUB_REF_NAME", "BUILD_SOURCEBRANCHNAME", "GIT_BRANCH", "BRANCH_NAME", "CI_COMMIT_REF_NAME", "CODEBUILD_SOURCE_VERSION"]
     for var in ci_env_vars:
         if os.environ.get(var):
             branch = os.environ.get(var)
-            # Nettoyage des préfixes Git classiques si présents
             if "refs/heads/" in branch:
                 branch = branch.replace("refs/heads/", "")
             return branch.split('/')[-1] if '/' in branch else branch
@@ -119,6 +116,7 @@ def main():
         logger.error(f"STRUCTURE ERROR: Planned artifact file not found at path: {args.plan}")
         sys.exit(1)
 
+    # 1. Parsing du fichier plan Terraform
     try:
         with open(args.plan, "r") as f:
             plan_data = json.load(f)
@@ -126,6 +124,7 @@ def main():
         logger.error(f"PARSING ERROR: Failed to decode target JSON plan file: {str(e)}")
         sys.exit(1)
 
+    # 2. Calcul du delta de coût estimé
     try:
         resource_changes = plan_data.get("resource_changes", [])
         active_changes = [r for r in resource_changes if "no-op" not in r.get("change", {}).get("actions", [])]
@@ -133,56 +132,68 @@ def main():
             cost_delta = float(len(active_changes) * 25.50)
         else:
             cost_delta = 0.00
-    except Exception as e:
+    except Exception:
         cost_delta = 10.00
 
-    headers = {"X-TerraCosts-API-Key": api_key, "Content-Type": "application/json"}
-    target_get_url = f"{api_url.rstrip('/')}/api/intelligence/projects"
-
-    budget_limit = 50.00
-    try:
-        response = requests.get(target_get_url, headers=headers, timeout=5)
-        if response.status_code == 200:
-            projects_list = response.json()
-            matched_project = next((p for p in projects_list if p.get("name") == args.project), None)
-            if matched_project and "threshold_limit" in matched_project:
-                budget_limit = float(matched_project["threshold_limit"])
-    except requests.RequestException:
-        if is_strict_mode:
-            logger.error(f"STRICT MODE: Target API unavailable during project validation scan.")
-            sys.exit(1)
-
-    is_compliant = cost_delta <= budget_limit
     git_branch = get_git_branch()
     ci_platform = detect_ci_platform()
 
+    # 3. Payload transmis au nouvel endpoint centralisé
     payload = {
-        "project": str(args.project),
+        "project_name": str(args.project),
         "branch": str(git_branch),
         "provider": str(args.provider).lower(),
         "delta": float(cost_delta),
-        "compliant": bool(is_compliant),
         "ci_platform": str(ci_platform),
-        "engine": str(ci_platform),
-        "executor_engine": str(ci_platform),
-        "execution_engine": str(ci_platform),
-        "business_unit_id": 1,
-        "user_id": 1
+        "compliance_errors": []
     }
 
-    target_post_url = f"{api_url.rstrip('/')}/api/intelligence/estimate/history"
-    try:
-        post_response = requests.post(target_post_url, json=payload, headers=headers, timeout=5)
-        if post_response.status_code in [200, 201]:
-            logger.info("Gating analysis successfully compiled and recorded to central API.")
-        else:
-            logger.error(f"API Audit ledger rejection {post_response.status_code}: {post_response.text}")
-    except requests.RequestException as e:
-        logger.error(f"Failed to transmit audit telemetry to central ledger: {str(e)}")
+    headers = {
+        "X-TerraCosts-API-Key": api_key,
+        "Content-Type": "application/json"
+    }
 
-    if not is_compliant:
-        sys.exit(1)
-    sys.exit(0)
+    target_evaluate_url = f"{api_url.rstrip('/')}/api/intelligence/gating/evaluate"
+
+    logger.info(f"Transmitting gating evaluation request to TerraCosts central engine (Platform: {ci_platform})...")
+
+    # 4. Appel de l'API /gating/evaluate
+    try:
+        response = requests.post(target_evaluate_url, json=payload, headers=headers, timeout=10)
+
+        if response.status_code in [200, 201]:
+            result = response.json()
+            status_gate = result.get("status")
+            metrics = result.get("metrics", {})
+
+            logger.info("================ FINOPS EVALUATION RESULTS ================")
+            logger.info(f"Project         : {result.get('project_evaluated')}")
+            logger.info(f"CI Platform     : {ci_platform}")
+            logger.info(f"Commit Delta    : +${metrics.get('delta', 0.0):.2f}")
+            logger.info(f"Commit Threshold: ${metrics.get('commit_threshold', 0.0):.2f} (Pass: {metrics.get('commit_compliant')})")
+            logger.info(f"MTD Spent Before: ${metrics.get('mtd_spent_before', 0.0):.2f}")
+            logger.info(f"MTD Projected   : ${metrics.get('mtd_projected', 0.0):.2f} / Limit: ${metrics.get('mtd_limit', 0.0):.2f} (Pass: {metrics.get('mtd_compliant')})")
+            logger.info(f"Final Decision  : {status_gate}")
+            logger.info("===========================================================")
+
+            if status_gate == "SUCCESS":
+                logger.info("✅ Gating Passed: Pipeline execution allowed.")
+                sys.exit(0)
+            else:
+                logger.error("❌ Gating Failed: Budget limit or threshold exceeded. Blocking pipeline!")
+                sys.exit(1)
+        else:
+            logger.error(f"API Rejection [{response.status_code}]: {response.text}")
+            if is_strict_mode:
+                sys.exit(1)
+            sys.exit(0)
+
+    except requests.RequestException as e:
+        logger.error(f"Failed to communicate with central TerraCosts API: {str(e)}")
+        if is_strict_mode:
+            logger.error("STRICT MODE ACTIVE: Failing pipeline execution due to API unreachability.")
+            sys.exit(1)
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()
