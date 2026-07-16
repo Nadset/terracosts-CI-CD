@@ -7,7 +7,6 @@ import logging
 import subprocess
 import requests
 
-# Configure logging to output clear, professional DevOps logs
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -17,28 +16,81 @@ logger = logging.getLogger("TerraCostsGating")
 
 def detect_ci_platform():
     """
-    Agnostically detects the active CI/CD platform based on native environment variables.
-    Returns: 'github', 'azure_devops', 'jenkins', or 'unknown'
+    Auto-détecte le moteur/plateforme d'exécution CI/CD pour la télémétrie FinOps.
+    Gère GitHub Actions, AWS CodeBuild, Azure DevOps, Jenkins, GCP Cloud Build et OCI DevOps.
     """
-    # Vérification des variables standard ou des overrides injectés
-    if os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("CI_PLATFORM") == "github":
-        return "github"
-    elif os.environ.get("TF_BUILD") == "True" or os.environ.get("CI_PLATFORM") == "azure_devops":
+    # 🔍 LOGS DE DIAGNOSTIC AVANT DETECTION
+    logger.info("======= DEBUG CI DETECTION =======")
+    logger.info(f"CWD actuel : {os.getcwd()}")
+    logger.info(f"Variable GITHUB_ACTIONS : {os.environ.get('GITHUB_ACTIONS')}")
+    logger.info(f"Variable CI_PLATFORM : {os.environ.get('CI_PLATFORM')}")
+    logger.info(f"Variable EXECUTOR_ENGINE : {os.environ.get('EXECUTOR_ENGINE')}")
+    logger.info(f"Variable TF_BUILD : {os.environ.get('TF_BUILD')}")
+    logger.info(f"Variable JENKINS_URL : {os.environ.get('JENKINS_URL')}")
+    logger.info(f"Variable CODEBUILD_BUILD_ID : {os.environ.get('CODEBUILD_BUILD_ID')}")
+    logger.info("==================================")
+
+    # 1. Détection prioritaire par variables d'environnement explicites ou pures
+    if os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("CI_PLATFORM") in ["github", "github_actions"]:
+        return "github_actions"
+    
+    if os.environ.get("CODEBUILD_BUILD_ID") is not None or os.environ.get("CI_PLATFORM") in ["aws_codebuild", "codebuild"]:
+        return "aws_codebuild"
+        
+    if os.environ.get("TF_BUILD") == "True" or os.environ.get("CI_PLATFORM") == "azure_devops":
         return "azure_devops"
-    elif os.environ.get("JENKINS_URL") is not None or os.environ.get("CI_PLATFORM") == "jenkins":
+        
+    if os.environ.get("JENKINS_URL") is not None or os.environ.get("CI_PLATFORM") == "jenkins":
         return "jenkins"
+
+    if os.environ.get("OCI_BUILD_ID") is not None or os.environ.get("CI_PLATFORM") == "oci_devops":
+        return "oci_devops"
+
+    if os.environ.get("GCP_BUILD_ID") is not None or os.environ.get("CI_PLATFORM") == "gcp_cloudbuild":
+        return "gcp_cloudbuild"
+
+    # 2. Détection par analyse du chemin du répertoire courant (CWD)
+    current_cwd = os.getcwd().lower()
+    if "codebuild" in current_cwd:
+        return "aws_codebuild"
+    elif "actions-runner" in current_cwd or "_work" in current_cwd:
+        return "github_actions"
+    elif "azdo" in current_cwd or "vsts" in current_cwd or "azure" in current_cwd:
+        return "azure_devops"
+    elif "jenkins" in current_cwd or "workspace" in current_cwd:
+        return "jenkins"
+
+    # 3. Scan global des clés d'environnement
+    try:
+        env_dump = str(os.environ).lower()
+        if "codebuild" in env_dump or "aws_build" in env_dump:
+            return "aws_codebuild"
+        if "github" in env_dump or "actions" in env_dump:
+            return "github_actions"
+        if "azure" in env_dump or "vsts" in env_dump:
+            return "azure_devops"
+        if "jenkins" in env_dump:
+            return "jenkins"
+    except Exception:
+        pass
+
+    # 4. Fallback direct sur la variable explicite si elle existe
+    explicit_platform = os.environ.get("CI_PLATFORM") or os.environ.get("EXECUTOR_ENGINE")
+    if explicit_platform:
+        return explicit_platform
+
     return "unknown"
 
 def get_git_branch():
-    """
-    Agnostically resolves the current Git branch name across different CI platforms.
-    """
-    ci_env_vars = ["GITHUB_REF_NAME", "BUILD_SOURCEBRANCHNAME", "GIT_BRANCH", "BRANCH_NAME", "CI_COMMIT_REF_NAME"]
+    # CODEBUILD_SOURCE_VERSION contient souvent la branche (ex: refs/heads/main ou juste main)
+    ci_env_vars = ["GITHUB_REF_NAME", "BUILD_SOURCEBRANCHNAME", "GIT_BRANCH", "BRANCH_NAME", "CI_COMMIT_REF_NAME", "CODEBUILD_SOURCE_VERSION"]
     for var in ci_env_vars:
         if os.environ.get(var):
             branch = os.environ.get(var)
+            # Nettoyage des préfixes Git classiques si présents
+            if "refs/heads/" in branch:
+                branch = branch.replace("refs/heads/", "")
             return branch.split('/')[-1] if '/' in branch else branch
-
     try:
         branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], stderr=subprocess.DEVNULL)
         return branch.decode("utf-8").strip()
@@ -46,9 +98,6 @@ def get_git_branch():
         return "unknown-branch"
 
 def parse_args():
-    """
-    Configures CLI arguments to make the script portable and easy to call from any CI.
-    """
     parser = argparse.ArgumentParser(description="TerraCosts FinOps CI/CD Gating Engine")
     parser.add_argument("--plan", required=True, help="Path to the Terraform plan.json file")
     parser.add_argument("--project", required=True, help="Unique name of the target cloud project")
@@ -57,8 +106,6 @@ def parse_args():
 
 def main():
     args = parse_args()
-
-    # 1. ENVIRONMENT CONFIGURATION & SECRETS EXTRACTION
     api_url = os.environ.get("TERRACOSTS_API_URL", "http://localhost:8000")
     api_key = os.environ.get("TERRACOSTS_API_KEY")
     strict_mode_env = os.environ.get("FINOPS_STRICT_MODE", "true").lower()
@@ -68,44 +115,27 @@ def main():
         logger.error("CRITICAL CONFIGURATION ERROR: 'TERRACOSTS_API_KEY' environment variable is missing.")
         sys.exit(1)
 
-    # 2. LOCAL TERRAFORM PLAN ANALYSIS
     if not os.path.exists(args.plan):
         logger.error(f"STRUCTURE ERROR: Planned artifact file not found at path: {args.plan}")
         sys.exit(1)
 
-    logger.info(f"Initiating structure parsing for file: {args.plan}")
     try:
         with open(args.plan, "r") as f:
             plan_data = json.load(f)
-        logger.info("Local plan architecture successfully verified.")
     except Exception as e:
         logger.error(f"PARSING ERROR: Failed to decode target JSON plan file: {str(e)}")
         sys.exit(1)
 
-    logger.info("Initiating mandatory tagging architecture compliance scan...")
-    logger.info("Compliance tag governance validation successful. All resources match dashboard criteria.")
-    logger.info("Initiating structural security assessment on planned changes...")
-    logger.info("Security guardrail validation successful. No critical structural flaws discovered.")
-
-    # 3. DYNAMIC COST DELTA EXTRACTION (Analyse réelle du plan Terraform)
-    # Calcule dynamiquement le nombre de ressources créées ou modifiées pour simuler un coût réel,
-    # ou retombe sur un coût de base si le plan est vide (fallback).
     try:
         resource_changes = plan_data.get("resource_changes", [])
         active_changes = [r for r in resource_changes if "no-op" not in r.get("change", {}).get("actions", [])]
-        
         if len(active_changes) > 0:
-            # Calcul agnostique basé sur l'envergure des modifications de l'infrastructure
             cost_delta = float(len(active_changes) * 25.50)
-            logger.info(f"Dynamically calculated cost delta from Terraform architecture ({len(active_changes)} changes detected): +${cost_delta:.2f}")
         else:
             cost_delta = 0.00
-            logger.info("No infrastructure cost variations detected in the provided ledger plan.")
     except Exception as e:
-        logger.warning(f"Unable to auto-calculate dynamic ledger variance ({str(e)}). Using safety baseline.")
         cost_delta = 10.00
 
-    # 4. BACKEND DYNAMIC BUDGET EXTRACTION WITH FAIL-SAFE MODE
     headers = {"X-TerraCosts-API-Key": api_key, "Content-Type": "application/json"}
     target_get_url = f"{api_url.rstrip('/')}/api/intelligence/projects"
 
@@ -117,45 +147,28 @@ def main():
             matched_project = next((p for p in projects_list if p.get("name") == args.project), None)
             if matched_project and "threshold_limit" in matched_project:
                 budget_limit = float(matched_project["threshold_limit"])
-                logger.info(f"Successfully retrieved dynamic budget threshold for '{args.project}': ${budget_limit:.2f}")
-            else:
-                logger.warning(f"Project '{args.project}' not found in registry. Using fallback budget limit.")
-        else:
-            logger.warning(f"Backend returned HTTP {response.status_code}. Unable to fetch live budget threshold.")
-    except requests.RequestException as e:
-        logger.warning(f"🚨 [FAIL-SAFE TRIGGERED] TerraCosts Central API is unreachable: {str(e)}")
+    except requests.RequestException:
         if is_strict_mode:
-            logger.error("CRITICAL: Strict mode is enabled. Halting pipeline execution due to governance API blackout.")
+            logger.error(f"STRICT MODE: Target API unavailable during project validation scan.")
             sys.exit(1)
-        else:
-            logger.warning("Permissive mode enabled. Continuing analysis with default baseline configurations.")
 
-    # 5. ARBITRAGE FINOPS & DECISION MATRIX
     is_compliant = cost_delta <= budget_limit
-
-    if not is_compliant:
-        logger.error(f"REJECTED: Cost delta (+${cost_delta:.2f}) breaches budget gate threshold (${budget_limit:.2f}) for '{args.project}'.")
-    else:
-        logger.info(f"PASSED: Cost delta (+${cost_delta:.2f}) is compliant with budget gate threshold (${budget_limit:.2f}) for '{args.project}'.")
-
-    # 6. TRANSMITTING TELEMETRY TO THE CENTRAL LEDGER WITH CI PLATFORM CONTEXT
     git_branch = get_git_branch()
     ci_platform = detect_ci_platform()
 
-    logger.info(f"Detected CI execution environment engine: system.{ci_platform}")
-
     payload = {
-        "project": args.project,
-        "branch": git_branch,
-        "provider": args.provider.lower(),
-        "delta": cost_delta,
-        "compliant": is_compliant,
-        "ci_platform": ci_platform,
+        "project": str(args.project),
+        "branch": str(git_branch),
+        "provider": str(args.provider).lower(),
+        "delta": float(cost_delta),
+        "compliant": bool(is_compliant),
+        "ci_platform": str(ci_platform),
+        "engine": str(ci_platform),
+        "executor_engine": str(ci_platform),
+        "execution_engine": str(ci_platform),
         "business_unit_id": 1,
         "user_id": 1
     }
-
-    logger.info(f"Transmitting telemetry matrix to central ledger for '{args.project}' (Compliant: {is_compliant})...")
 
     target_post_url = f"{api_url.rstrip('/')}/api/intelligence/estimate/history"
     try:
@@ -167,13 +180,8 @@ def main():
     except requests.RequestException as e:
         logger.error(f"Failed to transmit audit telemetry to central ledger: {str(e)}")
 
-    # 7. CRITICAL DECISION PIPELINE HALT
     if not is_compliant:
-        logger.info(f"Emergency alert email successfully dispatched to Nadset@yourenterprisebusiness.com.")
-        logger.critical("FinOps and security governance constraints breached. Halting CI/CD pipeline execution.")
         sys.exit(1)
-
-    logger.info(f"🚀 [SUCCESS] Gating verification pipeline completed successfully for '{args.project}'.")
     sys.exit(0)
 
 if __name__ == "__main__":
