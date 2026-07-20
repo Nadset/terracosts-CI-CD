@@ -172,6 +172,7 @@ def main():
             logger.info(f"Commit Delta    : +${metrics.get('delta', 0.0):.2f}")
             logger.info(f"Commit Threshold: ${metrics.get('commit_threshold', 0.0):.2f} (Pass: {metrics.get('commit_compliant')})")
             logger.info(f"MTD Spent Before: ${metrics.get('mtd_spent_before', 0.0):.2f}")
+            logger.info(f"Monthly Limit   : ${metrics.get('mtd_limit', 0.0):.2f}")
             logger.info(f"MTD Projected   : ${metrics.get('mtd_projected', 0.0):.2f} / Limit: ${metrics.get('mtd_limit', 0.0):.2f} (Pass: {metrics.get('mtd_compliant')})")
             logger.info(f"Final Decision  : {status_gate}")
             logger.info("===========================================================")
