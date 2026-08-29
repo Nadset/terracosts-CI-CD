@@ -1,0 +1,107 @@
+version: 0.2
+
+env:
+  variables:
+    TERRACOSTS_API_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJuYWRlci5zZXRheWVzaEBob3RtYWlsLmNvbSIsInVzZXJfaWQiOjEsInBsYW4iOiJlbnRlcnByaXNlIiwiZXhwIjoxNzgzMjg4MzQ3LCJpYXQiOjE3ODMyMDE5NDcsImlzcyI6IlRlcnJhQ29zdHMtU2FhUyJ9.mSItEsINrl5MhUoFIsGCRyAdNUys2Q0FZja9-Mn1mXM"
+    TERRACOSTS_API_URL: "http://127.0.0.1:8000"
+    FINOPS_STRICT_MODE: "true"
+    CI_PLATFORM: "aws_codebuild"
+    EXECUTOR_ENGINE: "aws_codebuild"
+
+phases:
+  install:
+    commands:
+      - echo "Installing Terraform..."
+      - tf_version="1.5.7"
+      - wget -q https://releases.hashicorp.com/terraform/${tf_version}/terraform_${tf_version}_linux_amd64.zip
+      - unzip -q terraform_${tf_version}_linux_amd64.zip
+      - mv terraform /usr/local/bin/
+      - terraform --version
+
+  build:
+    commands:
+      - echo "Starting Multi-Cloud Budget & Tag Governance Grid Simulation..."
+      - CODEBUILD_WORKSPACE=$(pwd)
+      - global_exit_code=0
+
+      - |
+        matrix_configs=$(cat << 'EOF'
+        Production-API;aws;terraform/aws;plan_aws.json
+        Frontend-App;azure;terraform/azure;plan_azure.json
+        Data-Pipeline;oci;terraform/oci;plan_oci.json
+        Core-Backend;gcp;terraform/gcp;plan_gcp.json
+        EOF
+        )
+
+        echo "$matrix_configs" | while IFS=';' read -r project_name provider working_dir plan_path; do
+          if [ -z "$project_name" ]; then continue; fi
+
+          echo "------------------------------------------------------------"
+          echo "Processing Matrix Item: $project_name [Cloud: $provider]"
+          echo "------------------------------------------------------------"
+
+          # 1. Vérification des changements de fichiers
+          any_changed="false"
+          if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+            if git diff --name-only HEAD~1 HEAD | grep -q "^${working_dir}/"; then
+              any_changed="true"
+            fi
+          else
+            any_changed="true"
+          fi
+
+          # 2. Génération du fichier JSON
+          full_plan_path="${CODEBUILD_WORKSPACE}/${plan_path}"
+
+          if [ "$any_changed" = "false" ]; then
+            echo "No changes detected for $provider. Generating a fallback mock structure..."
+            echo '{"format_version": "1.0", "planned_values": {"root_module": {"resources": []}}}' > "$full_plan_path"
+          else
+            echo "INFO: Structural changes detected for $provider. Launching infrastructure plan..."
+            cd "${CODEBUILD_WORKSPACE}/${working_dir}"
+            terraform init -no-color
+            if terraform plan -out=tfplan.binary -no-color; then
+              terraform show -json tfplan.binary > "$full_plan_path"
+            else
+              echo "ERROR: Terraform plan failed for $project_name"
+              global_exit_code=1
+              cd "$CODEBUILD_WORKSPACE"
+              continue
+            fi
+            cd "$CODEBUILD_WORKSPACE"
+          fi
+
+          # 3. Execution via le conteneur Docker terracosts-engine
+          echo "Executing production FinOps analysis for $project_name [Cloud: $provider]..."
+
+          docker cp "$full_plan_path" terracosts-engine:/app/"$plan_path"
+
+          if ! docker exec \
+            -e TERRACOSTS_API_KEY="$TERRACOSTS_API_KEY" \
+            -e TERRACOSTS_API_URL="$TERRACOSTS_API_URL" \
+            -e FINOPS_STRICT_MODE="$FINOPS_STRICT_MODE" \
+            -e CI_PLATFORM="$CI_PLATFORM" \
+            -e EXECUTOR_ENGINE="$EXECUTOR_ENGINE" \
+            terracosts-engine \
+            python3 /app/scripts/finops_gating.py \
+              --plan "/app/$plan_path" \
+              --project "$project_name" \
+              --provider "$provider"; then
+              echo "❌ Gating Verdict FAILED for project $project_name"
+              global_exit_code=1
+          else
+              echo "✅ Gating Verdict PASSED for project $project_name"
+          fi
+
+          # Nettoyage du fichier dans le conteneur
+          docker exec terracosts-engine rm -f /app/"$plan_path"
+        done
+
+        if [ $global_exit_code -ne 0 ]; then
+          echo "CRITICAL: FinOps gating policy violations or pipeline structural failures detected."
+          exit 1
+        fi
+
+  post_build:
+    commands:
+      - echo "Multi-Cloud Governance Workflow execution complete."
