@@ -11,6 +11,26 @@ on:
 jobs:
   finops-gating:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project_name: "Production-API"
+            provider: "aws"
+            working_dir: "terraform/aws"
+            plan_path: "plan.json"
+          - project_name: "Frontend-App"
+            provider: "azure"
+            working_dir: "terraform/azure"
+            plan_path: "plan.json"
+          - project_name: "Data-Pipeline"
+            provider: "oci"
+            working_dir: "terraform/oci"
+            plan_path: "plan.json"
+          - project_name: "Core-Backend"
+            provider: "gcp"
+            working_dir: "terraform/gcp"
+            plan_path: "plan.json"
     steps:
       - uses: actions/checkout@v4
 
