@@ -1,16 +1,28 @@
-name: TerraCosts FinOps Gating
+name: TerraCosts FinOps CI/CD Gating
+
+# API-first version (no docker exec / no self-hosted engine required)
+# Secrets (repo Settings → Secrets and variables → Actions):
+#   TERRACOSTS_API_KEY  = JWT (required)
+#   TERRACOSTS_API_URL  = https://terracosts.com  (optional)
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main ]
-    paths: [ 'terraform/**' ]
+    paths:
+      - 'terraform/**'
   pull_request:
     branches: [ main ]
-    paths: [ 'terraform/**' ]
+    paths:
+      - 'terraform/**'
 
 jobs:
   finops-gating:
+    name: ${{ matrix.project_name }} (${{ matrix.provider }})
     runs-on: ubuntu-latest
+    # Use self-hosted only if you still need private network access to clouds:
+    # runs-on: self-hosted
+
     strategy:
       fail-fast: false
       matrix:
@@ -18,32 +30,48 @@ jobs:
           - project_name: "Production-API"
             provider: "aws"
             working_dir: "terraform/aws"
-            plan_path: "plan.json"
           - project_name: "Frontend-App"
             provider: "azure"
             working_dir: "terraform/azure"
-            plan_path: "plan.json"
           - project_name: "Data-Pipeline"
             provider: "oci"
             working_dir: "terraform/oci"
-            plan_path: "plan.json"
           - project_name: "Core-Backend"
             provider: "gcp"
             working_dir: "terraform/gcp"
-            plan_path: "plan.json"
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: hashicorp/setup-terraform@v3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changes in matrix path
+        id: changed
+        uses: tj-actions/changed-files@v44
+        with:
+          files: ${{ matrix.working_dir }}/**
+
+      - name: Setup Terraform
+        if: steps.changed.outputs.any_changed == 'true'
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
 
-      - name: Terraform Init and Plan
-        working-directory: terraform
+      - name: Terraform Init & Plan
+        if: steps.changed.outputs.any_changed == 'true'
+        working-directory: ${{ matrix.working_dir }}
         run: |
+          set -euo pipefail
           terraform init -input=false
           terraform plan -input=false -out=tfplan.binary
-          terraform show -json tfplan.binary > "${{ github.workspace }}/plan.json"
+          terraform show -json tfplan.binary > "${{ github.workspace }}/plan-${{ matrix.provider }}.json"
+
+      - name: Fallback empty plan (no changes in this path)
+        if: steps.changed.outputs.any_changed != 'true'
+        run: |
+          echo '{"format_version":"1.0","resource_changes":[]}' > "${{ github.workspace }}/plan-${{ matrix.provider }}.json"
+          echo "No structural changes for ${{ matrix.provider }} — empty plan (delta $0)."
 
       - name: TerraCosts Gate (API)
         env:
@@ -51,10 +79,19 @@ jobs:
           TERRACOSTS_API_URL: ${{ secrets.TERRACOSTS_API_URL || 'https://terracosts.com' }}
         run: |
           set -euo pipefail
+          PLAN="${{ github.workspace }}/plan-${{ matrix.provider }}.json"
+          test -f "$PLAN"
+
+          if [ -z "${TERRACOSTS_API_KEY:-}" ]; then
+            echo "ERROR: secret TERRACOSTS_API_KEY is not set"
+            exit 1
+          fi
+
+          # Prefer full-plan analyze (server computes delta with same formula as legacy CLI)
           jq -n \
-            --slurpfile plan "${{ github.workspace }}/plan.json" \
-            --arg project "Production-API" \
-            --arg provider "aws" \
+            --slurpfile plan "$PLAN" \
+            --arg project "${{ matrix.project_name }}" \
+            --arg provider "${{ matrix.provider }}" \
             --arg branch "${{ github.ref_name }}" \
             '{
               plan: $plan[0],
@@ -67,9 +104,23 @@ jobs:
               strict_mode: true
             }' > /tmp/gating-body.json
 
+          echo "Calling $TERRACOSTS_API_URL/api/gating/analyze ..."
           HTTP_BODY=$(curl -sS -X POST "$TERRACOSTS_API_URL/api/gating/analyze" \
             -H "Authorization: Bearer $TERRACOSTS_API_KEY" \
+            -H "X-TerraCosts-API-Key: $TERRACOSTS_API_KEY" \
             -H "Content-Type: application/json" \
             -d @/tmp/gating-body.json)
+
           echo "$HTTP_BODY" | jq .
-          exit "$(echo "$HTTP_BODY" | jq -r '.exit_code // 1')"
+
+          VERDICT=$(echo "$HTTP_BODY" | jq -r '.verdict // .status // "FAILED"')
+          EXIT_CODE=$(echo "$HTTP_BODY" | jq -r '.exit_code // empty')
+          if [ -z "$EXIT_CODE" ] || [ "$EXIT_CODE" = "null" ]; then
+            if [ "$VERDICT" = "PASSED" ] || [ "$VERDICT" = "SUCCESS" ] || [ "$VERDICT" = "ok" ]; then
+              EXIT_CODE=0
+            else
+              EXIT_CODE=1
+            fi
+          fi
+          echo "Verdict=$VERDICT exit_code=$EXIT_CODE"
+          exit "$EXIT_CODE"
