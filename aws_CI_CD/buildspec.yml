@@ -1,107 +1,148 @@
+# TerraCosts FinOps CI/CD Gating — AWS CodeBuild (API-first, no docker exec)
+#
+# CodeBuild project environment:
+#   TERRACOSTS_API_KEY  (Secrets Manager / SSM recommended)
+#   TERRACOSTS_API_URL  = https://terracosts.com  (optional)
+#
+# Optional: set CODEBUILD_MATRIX_ONLY=aws to run a single provider.
+# Default runs all four stacks sequentially (CodeBuild has no native matrix).
+
 version: 0.2
 
 env:
   variables:
-    TERRACOSTS_API_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJuYWRlci5zZXRheWVzaEBob3RtYWlsLmNvbSIsInVzZXJfaWQiOjEsInBsYW4iOiJlbnRlcnByaXNlIiwiZXhwIjoxNzgzMjg4MzQ3LCJpYXQiOjE3ODMyMDE5NDcsImlzcyI6IlRlcnJhQ29zdHMtU2FhUyJ9.mSItEsINrl5MhUoFIsGCRyAdNUys2Q0FZja9-Mn1mXM"
-    TERRACOSTS_API_URL: "http://127.0.0.1:8000"
-    FINOPS_STRICT_MODE: "true"
-    CI_PLATFORM: "aws_codebuild"
-    EXECUTOR_ENGINE: "aws_codebuild"
+    TERRACOSTS_API_URL: "https://terracosts.com"
+    # TERRACOSTS_API_KEY must be injected as a secret env var on the project
+  # parameter-store:
+  #   TERRACOSTS_API_KEY: /terracosts/api-key
 
 phases:
   install:
+    runtime-versions:
+      python: 3.11
     commands:
-      - echo "Installing Terraform..."
-      - tf_version="1.5.7"
-      - wget -q https://releases.hashicorp.com/terraform/${tf_version}/terraform_${tf_version}_linux_amd64.zip
-      - unzip -q terraform_${tf_version}_linux_amd64.zip
-      - mv terraform /usr/local/bin/
-      - terraform --version
+      - echo "Installing Terraform and jq..."
+      - yum install -y jq unzip curl || (apt-get update && apt-get install -y jq unzip curl)
+      - |
+        TF_VERSION=1.9.0
+        curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/tf.zip
+        unzip -o /tmp/tf.zip -d /usr/local/bin
+        terraform version
+
+  pre_build:
+    commands:
+      - |
+        if [ -z "${TERRACOSTS_API_KEY:-}" ]; then
+          echo "ERROR: TERRACOSTS_API_KEY is not set"
+          exit 1
+        fi
+      - export TERRACOSTS_API_URL="${TERRACOSTS_API_URL:-https://terracosts.com}"
+      - echo "API URL=$TERRACOSTS_API_URL"
 
   build:
     commands:
-      - echo "Starting Multi-Cloud Budget & Tag Governance Grid Simulation..."
-      - CODEBUILD_WORKSPACE=$(pwd)
-      - global_exit_code=0
-
       - |
-        matrix_configs=$(cat << 'EOF'
-        Production-API;aws;terraform/aws;plan_aws.json
-        Frontend-App;azure;terraform/azure;plan_azure.json
-        Data-Pipeline;oci;terraform/oci;plan_oci.json
-        Core-Backend;gcp;terraform/gcp;plan_gcp.json
-        EOF
+        set -euo pipefail
+
+        # Matrix definition (same as GitHub Actions)
+        # format: project|provider|dir
+        MATRIX=(
+          "Production-API|aws|terraform/aws"
+          "Frontend-App|azure|terraform/azure"
+          "Data-Pipeline|oci|terraform/oci"
+          "Core-Backend|gcp|terraform/gcp"
         )
 
-        echo "$matrix_configs" | while IFS=';' read -r project_name provider working_dir plan_path; do
-          if [ -z "$project_name" ]; then continue; fi
+        # Optional filter: CODEBUILD_MATRIX_ONLY=aws|azure|gcp|oci
+        FILTER="${CODEBUILD_MATRIX_ONLY:-}"
 
-          echo "------------------------------------------------------------"
-          echo "Processing Matrix Item: $project_name [Cloud: $provider]"
-          echo "------------------------------------------------------------"
+        FAILED=0
 
-          # 1. Vérification des changements de fichiers
-          any_changed="false"
-          if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
-            if git diff --name-only HEAD~1 HEAD | grep -q "^${working_dir}/"; then
-              any_changed="true"
-            fi
-          else
-            any_changed="true"
+        for ROW in "${MATRIX[@]}"; do
+          IFS='|' read -r PROJECT PROVIDER DIR <<< "$ROW"
+
+          if [ -n "$FILTER" ] && [ "$FILTER" != "$PROVIDER" ]; then
+            echo "Skip $PROJECT ($PROVIDER) — filter=$FILTER"
+            continue
           fi
 
-          # 2. Génération du fichier JSON
-          full_plan_path="${CODEBUILD_WORKSPACE}/${plan_path}"
+          echo "============================================================"
+          echo "Gating: $PROJECT / $PROVIDER / $DIR"
+          echo "============================================================"
 
-          if [ "$any_changed" = "false" ]; then
-            echo "No changes detected for $provider. Generating a fallback mock structure..."
-            echo '{"format_version": "1.0", "planned_values": {"root_module": {"resources": []}}}' > "$full_plan_path"
+          PLAN_FILE="${CODEBUILD_SRC_DIR:-$PWD}/plan-${PROVIDER}.json"
+
+          if [ ! -d "$DIR" ]; then
+            echo "Directory $DIR missing — empty plan"
+            echo '{"format_version":"1.0","resource_changes":[]}' > "$PLAN_FILE"
           else
-            echo "INFO: Structural changes detected for $provider. Launching infrastructure plan..."
-            cd "${CODEBUILD_WORKSPACE}/${working_dir}"
-            terraform init -no-color
-            if terraform plan -out=tfplan.binary -no-color; then
-              terraform show -json tfplan.binary > "$full_plan_path"
+            # Detect changes vs previous commit when possible
+            CHANGED=yes
+            if git rev-parse HEAD~1 >/dev/null 2>&1; then
+              if ! git diff --name-only HEAD~1 HEAD -- "$DIR" | grep -q .; then
+                CHANGED=no
+              fi
+            fi
+
+            if [ "$CHANGED" = "yes" ]; then
+              (
+                cd "$DIR"
+                terraform init -input=false
+                terraform plan -input=false -out=tfplan.binary
+                terraform show -json tfplan.binary > "$PLAN_FILE"
+              )
             else
-              echo "ERROR: Terraform plan failed for $project_name"
-              global_exit_code=1
-              cd "$CODEBUILD_WORKSPACE"
-              continue
+              echo "No changes in $DIR — empty plan"
+              echo '{"format_version":"1.0","resource_changes":[]}' > "$PLAN_FILE"
             fi
-            cd "$CODEBUILD_WORKSPACE"
           fi
 
-          # 3. Execution via le conteneur Docker terracosts-engine
-          echo "Executing production FinOps analysis for $project_name [Cloud: $provider]..."
+          BRANCH="${CODEBUILD_WEBHOOK_HEAD_REF:-${CODEBUILD_SOURCE_VERSION:-main}}"
+          BRANCH="${BRANCH#refs/heads/}"
 
-          docker cp "$full_plan_path" terracosts-engine:/app/"$plan_path"
+          jq -n \
+            --slurpfile plan "$PLAN_FILE" \
+            --arg project "$PROJECT" \
+            --arg provider "$PROVIDER" \
+            --arg branch "$BRANCH" \
+            '{
+              plan: $plan[0],
+              project: $project,
+              provider: $provider,
+              branch: $branch,
+              organization: "Research & Development",
+              bu: "BU Core Payment",
+              ci_platform: "aws_codebuild",
+              strict_mode: true
+            }' > "/tmp/gating-body-${PROVIDER}.json"
 
-          if ! docker exec \
-            -e TERRACOSTS_API_KEY="$TERRACOSTS_API_KEY" \
-            -e TERRACOSTS_API_URL="$TERRACOSTS_API_URL" \
-            -e FINOPS_STRICT_MODE="$FINOPS_STRICT_MODE" \
-            -e CI_PLATFORM="$CI_PLATFORM" \
-            -e EXECUTOR_ENGINE="$EXECUTOR_ENGINE" \
-            terracosts-engine \
-            python3 /app/scripts/finops_gating.py \
-              --plan "/app/$plan_path" \
-              --project "$project_name" \
-              --provider "$provider"; then
-              echo "❌ Gating Verdict FAILED for project $project_name"
-              global_exit_code=1
+          HTTP_BODY=$(curl -sS -X POST "${TERRACOSTS_API_URL}/api/gating/analyze" \
+            -H "Authorization: Bearer ${TERRACOSTS_API_KEY}" \
+            -H "X-TerraCosts-API-Key: ${TERRACOSTS_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d @"/tmp/gating-body-${PROVIDER}.json")
+
+          echo "$HTTP_BODY" | jq .
+          EXIT_CODE=$(echo "$HTTP_BODY" | jq -r '.exit_code // 1')
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "FAILED gating for $PROJECT"
+            FAILED=1
           else
-              echo "✅ Gating Verdict PASSED for project $project_name"
+            echo "PASSED gating for $PROJECT"
           fi
-
-          # Nettoyage du fichier dans le conteneur
-          docker exec terracosts-engine rm -f /app/"$plan_path"
         done
 
-        if [ $global_exit_code -ne 0 ]; then
-          echo "CRITICAL: FinOps gating policy violations or pipeline structural failures detected."
+        if [ "$FAILED" -ne 0 ]; then
+          echo "One or more gates failed"
           exit 1
         fi
+        echo "All gates passed"
 
   post_build:
     commands:
-      - echo "Multi-Cloud Governance Workflow execution complete."
+      - echo "TerraCosts CodeBuild gating finished"
+
+artifacts:
+  files:
+    - 'plan-*.json'
+  discard-paths: yes
