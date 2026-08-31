@@ -1,11 +1,8 @@
-# TerraCosts FinOps CI/CD Gating — Azure DevOps (API-first, no docker exec)
+# TerraCosts FinOps CI/CD Gating — Azure DevOps (API-first, no docker, no Marketplace task)
 #
-# Pipeline variables / Variable group (mark as secret):
-#   TERRACOSTS_API_KEY  = JWT (secret)
+# Pipeline variables (mark TERRACOSTS_API_KEY as secret):
+#   TERRACOSTS_API_KEY  = JWT
 #   TERRACOSTS_API_URL  = https://terracosts.com  (optional)
-#
-# Agent needs: terraform, jq, curl
-# Pool: Microsoft-hosted ubuntu-latest OR your self-hosted "Default" pool with those tools
 
 trigger:
   branches:
@@ -25,7 +22,7 @@ pr:
 
 pool:
   vmImage: 'ubuntu-latest'
-  # If you must stay on self-hosted:
+  # Self-hosted alternative:
   # name: 'Default'
 
 strategy:
@@ -50,9 +47,6 @@ strategy:
 variables:
   - name: TERRACOSTS_API_URL
     value: 'https://terracosts.com'
-  # Prefer a Variable Group linked to the pipeline for the secret:
-  # - group: terracosts-secrets
-  # Or define TERRACOSTS_API_KEY as a secret pipeline variable in the UI.
 
 steps:
   - checkout: self
@@ -79,11 +73,23 @@ steps:
     condition: eq(variables['ANY_CHANGED'], 'false')
     displayName: 'Fallback empty Terraform plan'
 
-  - task: TerraformInstaller@1
+  # Install Terraform + jq via script (no Marketplace TerraformInstaller task)
+  - script: |
+      set -euo pipefail
+      if ! command -v jq >/dev/null 2>&1; then
+        sudo apt-get update -y
+        sudo apt-get install -y jq unzip curl
+      fi
+      if ! command -v terraform >/dev/null 2>&1; then
+        TF_VERSION=1.9.0
+        curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/tf.zip
+        sudo unzip -o /tmp/tf.zip -d /usr/local/bin
+        sudo chmod +x /usr/local/bin/terraform
+      fi
+      terraform version
+      jq --version
     condition: eq(variables['ANY_CHANGED'], 'true')
-    displayName: 'Install Terraform'
-    inputs:
-      terraformVersion: 'latest'
+    displayName: 'Install Terraform and jq'
 
   - script: |
       set -euo pipefail
@@ -106,10 +112,10 @@ steps:
 
       if [ -z "$API_KEY" ]; then
         echo "ERROR: pipeline secret variable TERRACOSTS_API_KEY is not set"
+        echo "Pipelines → Edit → Variables → TERRACOSTS_API_KEY (secret)"
         exit 1
       fi
 
-      # Ensure jq is available
       if ! command -v jq >/dev/null 2>&1; then
         sudo apt-get update -y && sudo apt-get install -y jq
       fi
