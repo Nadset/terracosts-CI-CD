@@ -1,9 +1,3 @@
-# TerraCosts FinOps CI/CD Gating — Azure DevOps (API-first, no docker, no Marketplace task)
-#
-# Pipeline variables (mark TERRACOSTS_API_KEY as secret):
-#   TERRACOSTS_API_KEY  = JWT
-#   TERRACOSTS_API_URL  = https://terracosts.com  (optional)
-
 trigger:
   branches:
     include:
@@ -12,18 +6,8 @@ trigger:
     include:
       - terraform/**
 
-pr:
-  branches:
-    include:
-      - main
-  paths:
-    include:
-      - terraform/**
-
 pool:
-  vmImage: 'ubuntu-latest'
-  # Self-hosted alternative:
-  # name: 'Default'
+  name: 'Default'
 
 strategy:
   matrix:
@@ -31,125 +15,72 @@ strategy:
       project_name: 'Production-API'
       provider: 'aws'
       working_dir: 'terraform/aws'
+      plan_path: 'plan.json'
     Frontend-App:
       project_name: 'Frontend-App'
       provider: 'azure'
       working_dir: 'terraform/azure'
+      plan_path: 'plan.json'
     Data-Pipeline:
       project_name: 'Data-Pipeline'
       provider: 'oci'
       working_dir: 'terraform/oci'
+      plan_path: 'plan.json'
     Core-Backend:
       project_name: 'Core-Backend'
       provider: 'gcp'
       working_dir: 'terraform/gcp'
-
-variables:
-  - name: TERRACOSTS_API_URL
-    value: 'https://terracosts.com'
+      plan_path: 'plan.json'
 
 steps:
-  - checkout: self
-    fetchDepth: 2
-    displayName: 'Checkout'
+- checkout: self
+  fetchDepth: 2
+  displayName: 'Checkout Repository Code'
 
-  - script: |
-      set -euo pipefail
-      CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
-      if echo "$CHANGED_FILES" | grep -q "^$(working_dir)/"; then
-        echo "##vso[task.setvariable variable=ANY_CHANGED]true"
-        echo "Changes detected under $(working_dir)"
-      else
-        echo "##vso[task.setvariable variable=ANY_CHANGED]false"
-        echo "No changes under $(working_dir)"
-      fi
-    displayName: 'Detect infrastructure changes'
+- script: |
+    CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+    if echo "$CHANGED_FILES" | grep -q "^$(working_dir)/"; then
+      echo "##vso[task.setvariable variable=ANY_CHANGED]true"
+    else
+      echo "##vso[task.setvariable variable=ANY_CHANGED]false"
+    fi
+  displayName: 'Verify Infrastructure Changes'
 
-  - script: |
-      set -euo pipefail
-      PLAN="$(Build.SourcesDirectory)/plan-$(provider).json"
-      echo '{"format_version":"1.0","resource_changes":[]}' > "$PLAN"
-      echo "Fallback empty plan written to $PLAN"
-    condition: eq(variables['ANY_CHANGED'], 'false')
-    displayName: 'Fallback empty Terraform plan'
+- script: |
+    echo '{"format_version": "1.0", "resource_changes": []}' > $(Build.SourcesDirectory)/$(plan_path)
+  condition: eq(variables['ANY_CHANGED'], 'false')
+  displayName: 'Ensure Fallback Terraform Plan Ledger Exists'
 
-  # Install Terraform + jq via script (no Marketplace TerraformInstaller task)
-  - script: |
-      set -euo pipefail
-      if ! command -v jq >/dev/null 2>&1; then
-        sudo apt-get update -y
-        sudo apt-get install -y jq unzip curl
-      fi
-      if ! command -v terraform >/dev/null 2>&1; then
-        TF_VERSION=1.9.0
-        curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/tf.zip
-        sudo unzip -o /tmp/tf.zip -d /usr/local/bin
-        sudo chmod +x /usr/local/bin/terraform
-      fi
-      terraform version
-      jq --version
-    condition: eq(variables['ANY_CHANGED'], 'true')
-    displayName: 'Install Terraform and jq'
+- script: |
+    cd $(working_dir)
+    terraform init
+    terraform plan -out=tfplan.binary
+    terraform show -json tfplan.binary > $(Build.SourcesDirectory)/$(plan_path)
+  condition: eq(variables['ANY_CHANGED'], 'true')
+  displayName: 'Terraform Live Init, Plan and Export Ledger'
 
-  - script: |
-      set -euo pipefail
-      PLAN="$(Build.SourcesDirectory)/plan-$(provider).json"
-      cd "$(working_dir)"
-      terraform init -input=false
-      terraform plan -input=false -out=tfplan.binary
-      terraform show -json tfplan.binary > "$PLAN"
-      echo "Plan exported to $PLAN"
-    condition: eq(variables['ANY_CHANGED'], 'true')
-    displayName: 'Terraform Init, Plan, Export JSON'
+- script: |
+    echo "Executing production FinOps analysis for $(project_name) [Cloud: $(provider)]..."
 
-  - script: |
-      set -euo pipefail
-      PLAN="$(Build.SourcesDirectory)/plan-$(provider).json"
-      test -f "$PLAN"
+    # 1. Copie du plan généré dans le conteneur
+    docker cp $(Build.SourcesDirectory)/$(plan_path) terracosts-engine:/app/$(plan_path)
 
-      API_URL="${TERRACOSTS_API_URL:-https://terracosts.com}"
-      API_KEY="${TERRACOSTS_API_KEY:-}"
+    # 2. Exécution du gating à l'intérieur du conteneur
+    docker exec \
+      -e TERRACOSTS_API_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJuYWRlci5zZXRheWVzaEBob3RtYWlsLmNvbSIsInVzZXJfaWQiOjEsInBsYW4iOiJlbnRlcnByaXNlIiwiZXhwIjoxNzgzMjg4MzQ3LCJpYXQiOjE3ODMyMDE5NDcsImlzcyI6IlRlcnJhQ29zdHMtU2FhUyJ9.mSItEsINrl5MhUoFIsGCRyAdNUys2Q0FZja9-Mn1mXM" \
+      -e TERRACOSTS_API_URL="http://127.0.0.1:8000" \
+      -e FINOPS_STRICT_MODE="true" \
+      -e CI_PLATFORM="azure_devops" \
+      -e EXECUTOR_ENGINE="azure_devops" \
+      -e TF_BUILD="True" \
+      terracosts-engine \
+      python3 /app/scripts/finops_gating.py \
+        --plan "/app/$(plan_path)" \
+        --project "$(project_name)" \
+        --provider "$(provider)"
+  displayName: 'Execute FinOps Gate Analysis & Sync Telemetry'
 
-      if [ -z "$API_KEY" ]; then
-        echo "ERROR: pipeline secret variable TERRACOSTS_API_KEY is not set"
-        echo "Pipelines → Edit → Variables → TERRACOSTS_API_KEY (secret)"
-        exit 1
-      fi
-
-      if ! command -v jq >/dev/null 2>&1; then
-        sudo apt-get update -y && sudo apt-get install -y jq
-      fi
-
-      jq -n \
-        --slurpfile plan "$PLAN" \
-        --arg project "$(project_name)" \
-        --arg provider "$(provider)" \
-        --arg branch "$(Build.SourceBranchName)" \
-        '{
-          plan: $plan[0],
-          project: $project,
-          provider: $provider,
-          branch: $branch,
-          organization: "Research & Development",
-          bu: "BU Core Payment",
-          ci_platform: "azure_devops",
-          strict_mode: true
-        }' > /tmp/gating-body.json
-
-      echo "Calling $API_URL/api/gating/analyze for $(project_name)..."
-      HTTP_BODY=$(curl -sS -X POST "$API_URL/api/gating/analyze" \
-        -H "Authorization: Bearer $API_KEY" \
-        -H "X-TerraCosts-API-Key: $API_KEY" \
-        -H "Content-Type: application/json" \
-        -d @/tmp/gating-body.json)
-
-      echo "$HTTP_BODY" | jq .
-
-      EXIT_CODE=$(echo "$HTTP_BODY" | jq -r '.exit_code // 1')
-      VERDICT=$(echo "$HTTP_BODY" | jq -r '.verdict // .status // "FAILED"')
-      echo "Verdict=$VERDICT exit_code=$EXIT_CODE"
-      exit "$EXIT_CODE"
-    env:
-      TERRACOSTS_API_KEY: $(TERRACOSTS_API_KEY)
-      TERRACOSTS_API_URL: $(TERRACOSTS_API_URL)
-    displayName: 'TerraCosts Gate (API)'
+- script: |
+    docker exec terracosts-engine rm -f /app/$(plan_path)
+  condition: always()
+  displayName: 'Cleanup Temporary Plan in Container'
