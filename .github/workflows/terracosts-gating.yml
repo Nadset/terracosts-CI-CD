@@ -75,7 +75,7 @@ jobs:
 
           # 2. Exécution du gating à l'intérieur du conteneur
           docker exec \
-            -e TERRACOSTS_API_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJuYWRlci5zZXRheWVzaEBob3RtYWlsLmNvbSIsInVzZXJfaWQiOjEsInBsYW4iOiJlbnRlcnByaXNlIiwiZXhwIjoxNzgzMjg4MzQ3LCJpYXQiOjE3ODMyMDE5NDcsImlzcyI6IlRlcnJhQ29zdHMtU2FhUzJ9.mSItEsINrl5MhUoFIsGCRyAdNUys2Q0FZja9-Mn1mXM" \
+            -e TERRACOSTS_API_KEY="${TERRACOSTS_API_KEY}" \
             -e TERRACOSTS_API_URL="http://127.0.0.1:8000" \
             -e FINOPS_STRICT_MODE="true" \
             -e CI_PLATFORM="github_actions" \
