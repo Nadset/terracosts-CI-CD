@@ -27,6 +27,7 @@ def detect_ci_platform():
     logger.info(f"Variable TF_BUILD : {os.environ.get('TF_BUILD')}")
     logger.info(f"Variable JENKINS_URL : {os.environ.get('JENKINS_URL')}")
     logger.info(f"Variable CODEBUILD_BUILD_ID : {os.environ.get('CODEBUILD_BUILD_ID')}")
+    logger.info(f"Variable ORGANIZATION_ID : {os.environ.get('ORGANIZATION_ID')}")
     logger.info("==================================")
 
     # 1. Détection prioritaire par variables d'environnement explicites
@@ -81,13 +82,22 @@ def detect_ci_platform():
     return "unknown"
 
 def get_git_branch():
-    ci_env_vars = ["GITHUB_REF_NAME", "BUILD_SOURCEBRANCHNAME", "GIT_BRANCH", "BRANCH_NAME", "CI_COMMIT_REF_NAME", "CODEBUILD_SOURCE_VERSION"]
+    """
+    Récupère le nom complet de la branche Git sans tronquer les préfixes de type 'feature/'.
+    """
+    ci_env_vars = ["BRANCH_NAME", "GIT_BRANCH", "GITHUB_REF_NAME", "BUILD_SOURCEBRANCHNAME", "CI_COMMIT_REF_NAME", "CODEBUILD_SOURCE_VERSION"]
     for var in ci_env_vars:
         if os.environ.get(var):
             branch = os.environ.get(var)
+            
+            # Nettoyage des préfixes Git standards
             if "refs/heads/" in branch:
                 branch = branch.replace("refs/heads/", "")
-            return branch.split('/')[-1] if '/' in branch else branch
+            if branch.startswith("origin/"):
+                branch = branch.replace("origin/", "", 1)
+                
+            return branch.strip()
+
     try:
         branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], stderr=subprocess.DEVNULL)
         return branch.decode("utf-8").strip()
@@ -105,6 +115,7 @@ def main():
     args = parse_args()
     api_url = os.environ.get("TERRACOSTS_API_URL", "http://localhost:8000")
     api_key = os.environ.get("TERRACOSTS_API_KEY")
+    organization_id = os.environ.get("ORGANIZATION_ID") or os.environ.get("TERRACOSTS_ORG_ID")
     strict_mode_env = os.environ.get("FINOPS_STRICT_MODE", "true").lower()
     is_strict_mode = strict_mode_env in ["true", "1", "yes"]
 
@@ -116,10 +127,13 @@ def main():
         logger.error(f"STRUCTURE ERROR: Planned artifact file not found at path: {args.plan}")
         sys.exit(1)
 
-    # 1. Parsing du fichier plan Terraform
+    # 1. Parsing du fichier plan Terraform avec gestion d'erreurs avancée
     try:
         with open(args.plan, "r") as f:
             plan_data = json.load(f)
+    except json.JSONDecodeError as e:
+        logger.error(f"CORRUPTED ARTIFACT ERROR: The file '{args.plan}' is not a valid JSON. Details: {str(e)}")
+        sys.exit(1)
     except Exception as e:
         logger.error(f"PARSING ERROR: Failed to decode target JSON plan file: {str(e)}")
         sys.exit(1)
@@ -138,13 +152,14 @@ def main():
     git_branch = get_git_branch()
     ci_platform = detect_ci_platform()
 
-    # 3. Payload transmis au nouvel endpoint centralisé
+    # 3. Payload transmis à l'API centralisée (avec inclusion de l'organization_id)
     payload = {
         "project_name": str(args.project),
         "branch": str(git_branch),
         "provider": str(args.provider).lower(),
         "delta": float(cost_delta),
         "ci_platform": str(ci_platform),
+        "organization_id": str(organization_id) if organization_id else None,
         "compliance_errors": []
     }
 
@@ -155,7 +170,7 @@ def main():
 
     target_evaluate_url = f"{api_url.rstrip('/')}/api/intelligence/gating/evaluate"
 
-    logger.info(f"Transmitting gating evaluation request to TerraCosts central engine (Platform: {ci_platform})...")
+    logger.info(f"Transmitting gating evaluation request to TerraCosts central engine (Platform: {ci_platform}, Org: {organization_id or 'Auto-Resolve'})...")
 
     # 4. Appel de l'API /gating/evaluate
     try:
@@ -169,6 +184,7 @@ def main():
             logger.info("================ FINOPS EVALUATION RESULTS ================")
             logger.info(f"Project         : {result.get('project_evaluated')}")
             logger.info(f"CI Platform     : {ci_platform}")
+            logger.info(f"Organization ID : {organization_id or result.get('organization_id', 'Default')}")
             logger.info(f"Commit Delta    : +${metrics.get('delta', 0.0):.2f}")
             logger.info(f"Commit Threshold: ${metrics.get('commit_threshold', 0.0):.2f} (Pass: {metrics.get('commit_compliant')})")
             logger.info(f"MTD Spent Before: ${metrics.get('mtd_spent_before', 0.0):.2f}")
