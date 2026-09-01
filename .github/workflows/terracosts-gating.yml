@@ -1,39 +1,37 @@
-name: Terracosts FinOps Gating CI/CD
+name: TerraCosts FinOps CI/CD Gating
 
 on:
+  workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [ main ]
     paths:
       - 'terraform/**'
 
 jobs:
   finops-gating:
-    name: ${{ matrix.project_name }} (${{ matrix.provider }})
-    runs-on: ubuntu-latest
+    name: Multi-Cloud Budget & Tag Governance
+    runs-on: self-hosted
+
     strategy:
       fail-fast: false
       matrix:
         include:
-          - project_name: 'Production-API'
-            provider: 'aws'
-            working_dir: 'terraform/aws'
-            plan_path: 'plan.json'
-
-          - project_name: 'Frontend-App'
-            provider: 'azure'
-            working_dir: 'terraform/azure'
-            plan_path: 'plan.json'
-
-          - project_name: 'Data-Pipeline'
-            provider: 'oci'
-            working_dir: 'terraform/oci'
-            plan_path: 'plan.json'
-
-          - project_name: 'Core-Backend'
-            provider: 'gcp'
-            working_dir: 'terraform/gcp'
-            plan_path: 'plan.json'
+          - project_name: "Production-API"
+            provider: "aws"
+            working_dir: "terraform/aws"
+            plan_path: "plan.json"
+          - project_name: "Frontend-App"
+            provider: "azure"
+            working_dir: "terraform/azure"
+            plan_path: "plan.json"
+          - project_name: "Data-Pipeline"
+            provider: "oci"
+            working_dir: "terraform/oci"
+            plan_path: "plan.json"
+          - project_name: "Core-Backend"
+            provider: "gcp"
+            working_dir: "terraform/gcp"
+            plan_path: "plan.json"
 
     steps:
       - name: Checkout Repository Code
@@ -41,70 +39,57 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Check Changed Files
+        id: changed-files
+        uses: tj-actions/changed-files@v44
         with:
-          python-version: '3.x'
+          files: ${{ matrix.working_dir }}/**
 
-      - name: Verify Infrastructure Changes
-        id: check_changes
+      - name: Ensure Terraform Plan Artifact Exists
+        if: steps.changed-files.outputs.any_changed == 'false'
         run: |
-          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
-          if echo "$CHANGED_FILES" | grep -q "^${{ matrix.working_dir }}/"; then
-            echo "ANY_CHANGED=true" >> $GITHUB_OUTPUT
-          else
-            echo "ANY_CHANGED=false" >> $GITHUB_OUTPUT
-          fi
+          echo "No changes detected for ${{ matrix.provider }}. Generating a fallback mock structure..."
+          echo '{"format_version": "1.0", "planned_values": {"root_module": {"resources": []}}}' > ${{ github.workspace }}/${{ matrix.plan_path }}
 
-      - name: Ensure Fallback Terraform Plan Ledger Exists
-        if: steps.check_changes.outputs.ANY_CHANGED == 'false'
+      - name: Terraform Init and Plan
+        if: steps.changed-files.outputs.any_changed == 'true'
+        working-directory: ${{ matrix.working_dir }}
         run: |
-          echo '{"format_version": "1.0", "resource_changes": []}' > "${{ github.workspace }}/${{ matrix.plan_path }}"
-
-      - name: Terraform Live Init, Plan and Export Ledger
-        if: steps.check_changes.outputs.ANY_CHANGED == 'true'
-        run: |
-          cd ${{ matrix.working_dir }}
+          echo "INFO: Structural changes detected for ${{ matrix.provider }}. Launching infrastructure plan..."
           terraform init
           terraform plan -out=tfplan.binary
-          terraform show -json tfplan.binary > "${{ github.workspace }}/${{ matrix.plan_path }}"
 
-      - name: Generate Runtime SSL Bypass Patch
+      - name: Export Infrastructure Architecture to JSON Ledger
+        if: steps.changed-files.outputs.any_changed == 'true'
+        working-directory: ${{ matrix.working_dir }}
         run: |
-          mkdir -p "${{ github.workspace }}/patch"
-          cat << 'EOF' > "${{ github.workspace }}/patch/sitecustomize.py"
-          import warnings
-          try:
-              import urllib3
-              urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-          except ImportError:
-              pass
-          try:
-              import requests
-              from requests.adapters import HTTPAdapter
-              orig_send = HTTPAdapter.send
-              def patched_send(self, request, **kwargs):
-                  kwargs['verify'] = False
-                  return orig_send(self, request, **kwargs)
-              HTTPAdapter.send = patched_send
-          except Exception:
-              pass
-          EOF
+          terraform show -json tfplan.binary > ${{ github.workspace }}/${{ matrix.plan_path }}
 
+      # 🛡️ Governance Execution via Docker Container
       - name: Execute FinOps Gate Analysis & Sync Telemetry
         env:
           TERRACOSTS_API_KEY: ${{ secrets.TERRACOSTS_API_KEY }}
-          TERRACOSTS_API_URL: 'http://127.0.0.1:8000'
-          FINOPS_STRICT_MODE: 'true'
-          PYTHONPATH: "${{ github.workspace }}/patch"
-          CI_PLATFORM: 'github_actions'
-          EXECUTOR_ENGINE: 'github_actions'
-          GITHUB_ACTIONS: 'true'
-          HTTP_PROXY: ""
-          HTTPS_PROXY: ""
-          NO_PROXY: "127.0.0.1,localhost"
         run: |
-          python3 /home/terracosts-pro/scripts/finops_gating.py \
-            --plan "${{ github.workspace }}/${{ matrix.plan_path }}" \
-            --project "${{ matrix.project_name }}" \
-            --provider "${{ matrix.provider }}"
+          echo "Executing production FinOps analysis for ${{ matrix.project_name }} [Cloud: ${{ matrix.provider }}]..."
+
+          # 1. Copie du plan généré dans le conteneur
+          docker cp ${{ github.workspace }}/${{ matrix.plan_path }} terracosts-engine:/app/${{ matrix.plan_path }}
+
+          # 2. Exécution du gating à l'intérieur du conteneur
+          docker exec \
+            -e TERRACOSTS_API_KEY="$TERRACOSTS_API_KEY" \
+            -e TERRACOSTS_API_URL="http://127.0.0.1:8000" \
+            -e FINOPS_STRICT_MODE="true" \
+            -e CI_PLATFORM="github_actions" \
+            -e EXECUTOR_ENGINE="github_actions" \
+            -e GITHUB_ACTIONS="true" \
+            terracosts-engine \
+            python3 /app/scripts/finops_gating.py \
+              --plan "/app/${{ matrix.plan_path }}" \
+              --project "${{ matrix.project_name }}" \
+              --provider "${{ matrix.provider }}"
+
+      - name: Cleanup Temporary Plan in Container
+        if: always()
+        run: |
+          docker exec terracosts-engine rm -f /app/${{ matrix.plan_path }}
