@@ -60,41 +60,27 @@ steps:
   displayName: 'Terraform Live Init, Plan and Export Ledger'
 
 - script: |
-    mkdir -p $(Build.SourcesDirectory)/patch
-    cat << 'EOF' > $(Build.SourcesDirectory)/patch/sitecustomize.py
-    import warnings
-    try:
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    except ImportError:
-        pass
-    try:
-        import requests
-        from requests.adapters import HTTPAdapter
-        orig_send = HTTPAdapter.send
-        def patched_send(self, request, **kwargs):
-            kwargs['verify'] = False
-            return orig_send(self, request, **kwargs)
-        HTTPAdapter.send = patched_send
-    except Exception:
-        pass
-    EOF
-  displayName: 'Generate Runtime SSL Bypass Patch'
+    echo "Executing production FinOps analysis for $(project_name) [Cloud: $(provider)]..."
+
+    # 1. Copie du plan généré dans le conteneur
+    docker cp $(Build.SourcesDirectory)/$(plan_path) terracosts-engine:/app/$(plan_path)
+
+    # 2. Exécution du gating à l'intérieur du conteneur avec la variable Azure DevOps
+    docker exec \
+      -e TERRACOSTS_API_KEY="$(TERRACOSTS_API_KEY)" \
+      -e TERRACOSTS_API_URL="http://127.0.0.1:8000" \
+      -e FINOPS_STRICT_MODE="true" \
+      -e CI_PLATFORM="azure_devops" \
+      -e EXECUTOR_ENGINE="azure_devops" \
+      -e TF_BUILD="True" \
+      terracosts-engine \
+      python3 /app/scripts/finops_gating.py \
+        --plan "/app/$(plan_path)" \
+        --project "$(project_name)" \
+        --provider "$(provider)"
+  displayName: 'Execute FinOps Gate Analysis & Sync Telemetry'
 
 - script: |
-    python3 /home/terracosts-pro/scripts/finops_gating.py \
-      --plan "$(Build.SourcesDirectory)/$(plan_path)" \
-      --project "$(project_name)" \
-      --provider "$(provider)"
-  env:
-    # Utilisation du Token JWT vérifié et fonctionnel
-    TERRACOSTS_API_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJuYWRlci5zZXRheWVzaEBob3RtYWlsLmNvbSIsInVzZXJfaWQiOjEsInBsYW4iOiJlbnRlcnByaXNlIiwiZXhwIjoxNzgzMjg4MzQ3LCJpYXQiOjE3ODMyMDE5NDcsImlzcyI6IlRlcnJhQ29zdHMtU2FhUyJ9.mSItEsINrl5MhUoFIsGCRyAdNUys2Q0FZja9-Mn1mXM"
-    TERRACOSTS_API_URL: 'http://127.0.0.1:8000' # Routage vers le port local direct de FastAPI
-    FINOPS_STRICT_MODE: 'true'
-    PYTHONPATH: "$(Build.SourcesDirectory)/patch"
-    CI_PLATFORM: 'azure_devops'
-    TF_BUILD: 'True'
-    HTTP_PROXY: ""
-    HTTPS_PROXY: ""
-    NO_PROXY: "127.0.0.1,localhost"
-  displayName: 'Execute FinOps Gate Analysis & Sync Telemetry'
+    docker exec terracosts-engine rm -f /app/$(plan_path)
+  condition: always()
+  displayName: 'Cleanup Temporary Plan in Container'
