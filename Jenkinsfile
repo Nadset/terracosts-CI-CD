@@ -6,9 +6,9 @@ pipeline {
         FINOPS_STRICT_MODE = 'true'
         CI_PLATFORM        = 'jenkins'
         EXECUTOR_ENGINE    = 'jenkins'
-        ORGANIZATION_ID    = '11111111-1111-1111-1111-111111111111'
-        PROJECT_NAME       = 'My New project'
-        PROVIDER           = 'azure'
+        ORGANIZATION_ID    = '019a8da2-cacd-4f66-9c2f-4d49d9051bcf'
+        PROJECT_NAME       = 'It consult V2'
+        PROVIDER           = 'aws'
     }
     stages {
         stage('Checkout') {
