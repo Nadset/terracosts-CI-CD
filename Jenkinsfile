@@ -58,31 +58,33 @@ EOF
                         echo "=========================================="
 
                         RESPONSE=$(curl -s -w "\\n%{http_code}" -X POST "$TERRACOSTS_API_URL/api/gating/evaluate" \
-                          -H "Authorization: Bearer $TERRACOSTS_API_KEY" \
-                          -H "Content-Type: application/json" \
-                          -d "$(jq -n \
-                            --arg org "$TERRACOSTS_ORG" \
-                            --arg bu "$TERRACOSTS_BU" \
-                            --arg project_name "$TERRACOSTS_PROJECT" \
-                            --arg provider "$CLOUD_PROVIDER" \
-                            --arg engine "jenkins" \
-                            --arg ci_plat "jenkins" \
-                            --arg exec_eng "jenkins" \
-                            --arg run_id "$BUILD_NUMBER" \
-                            --arg branch "${GIT_BRANCH:-origin/main}" \
-                            --slurpfile plan tfplan.json \
-                            '{
-                              organization: $org,
-                              business_unit: $bu,
-                              project_name: $project_name,
-                              provider: $provider,
-                              engine: $engine,
-                              ci_platform: $ci_plat,
-                              executor_engine: $exec_eng,
-                              pipeline_run_id: $run_id,
-                              branch: $branch,
-                              tfplan: $plan[0]
-                            }')")
+  -H "Authorization: Bearer $TERRACOSTS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n \
+    --arg org "$TERRACOSTS_ORG" \
+    --arg bu "$TERRACOSTS_BU" \
+    --arg project_name "$TERRACOSTS_PROJECT" \
+    --arg provider "$CLOUD_PROVIDER" \
+    --argjson delta 102.00 \
+    --arg engine "jenkins" \
+    --arg ci_plat "jenkins" \
+    --arg exec_eng "jenkins" \
+    --arg run_id "$BUILD_NUMBER" \
+    --arg branch "${GIT_BRANCH:-origin/main}" \
+    --slurpfile plan tfplan.json \
+    '{
+      organization: $org,
+      business_unit: $bu,
+      project_name: $project_name,
+      provider: $provider,
+      delta: $delta,
+      engine: $engine,
+      ci_platform: $ci_plat,
+      executor_engine: $exec_eng,
+      pipeline_run_id: $run_id,
+      branch: $branch,
+      tfplan: $plan[0]
+    }')")
 
                         HTTP_BODY=$(echo "$RESPONSE" | head -n -1)
                         HTTP_STATUS=$(echo "$RESPONSE" | tail -n1)
