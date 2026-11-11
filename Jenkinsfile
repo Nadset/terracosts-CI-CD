@@ -7,8 +7,8 @@ pipeline {
         CI_PLATFORM        = 'jenkins'
         EXECUTOR_ENGINE    = 'jenkins'
         ORGANIZATION_ID    = '019a8da2-cacd-4f66-9c2f-4d49d9051bcf'
-        PROJECT_NAME       = 'It consult V2'
-        PROVIDER           = 'aws'
+        PROJECT_NAME       = 'Azure project'
+        PROVIDER           = 'azure'
     }
     stages {
         stage('Checkout') {
