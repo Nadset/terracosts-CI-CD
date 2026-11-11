@@ -6,9 +6,9 @@ pipeline {
         FINOPS_STRICT_MODE = 'true'
         CI_PLATFORM        = 'jenkins'
         EXECUTOR_ENGINE    = 'jenkins'
-        ORGANIZATION_ID    = '11111111-1111-1111-1111-111111111111'
-        PROJECT_NAME       = 'terracosts-azure-core'
-        PROVIDER           = 'azure'
+        ORGANIZATION_ID    = 'be3171ed-c4ee-41a4-b9f5-19c0dfcaf881'
+        PROJECT_NAME       = 'IT Consult - Project'
+        PROVIDER           = 'aws'
     }
     stages {
         stage('Checkout') {
