@@ -42,7 +42,7 @@ pipeline {
                           -d "$(jq -n \
                             --arg org "$TERRACOSTS_ORG" \
                             --arg bu "$TERRACOSTS_BU" \
-                            --arg project "$TERRACOSTS_PROJECT" \
+                            --arg project_name "$TERRACOSTS_PROJECT" \
                             --arg provider "$CLOUD_PROVIDER" \
                             --arg engine "jenkins" \
                             --arg run_id "$BUILD_NUMBER" \
@@ -51,7 +51,7 @@ pipeline {
                             '{
                               organization: $org,
                               business_unit: $bu,
-                              project: $project,
+                              project_name: $project_name,
                               provider: $provider,
                               engine: $engine,
                               pipeline_run_id: $run_id,
