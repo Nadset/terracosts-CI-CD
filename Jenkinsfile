@@ -17,13 +17,32 @@ pipeline {
                 checkout scm
             }
         }
-        stage('Terraform Plan') {
+        stage('Mock Terraform Plan') {
             steps {
                 dir('terraform/aws') {
                     sh '''
-                        terraform init -input=false
-                        terraform plan -input=false -out=tfplan.binary
-                        terraform show -json tfplan.binary > tfplan.json
+                        echo "Generating mock tfplan.json for testing delta..."
+                        cat << 'EOF' > tfplan.json
+                        {
+                          "format_version": "1.0",
+                          "planned_values": {
+                            "root_module": {
+                              "resources": [
+                                { "address": "aws_db_instance.db1", "mode": "managed", "type": "aws_db_instance", "name": "db1", "provider_name": "registry.terraform.io/hashicorp/aws", "values": { "instance_class": "db.m5.2xlarge", "allocated_storage": 500 } },
+                                { "address": "aws_db_instance.db2", "mode": "managed", "type": "aws_db_instance", "name": "db2", "provider_name": "registry.terraform.io/hashicorp/aws", "values": { "instance_class": "db.m5.2xlarge", "allocated_storage": 500 } },
+                                { "address": "aws_db_instance.db3", "mode": "managed", "type": "aws_db_instance", "name": "db3", "provider_name": "registry.terraform.io/hashicorp/aws", "values": { "instance_class": "db.m5.2xlarge", "allocated_storage": 500 } },
+                                { "address": "aws_db_instance.db4", "mode": "managed", "type": "aws_db_instance", "name": "db4", "provider_name": "registry.terraform.io/hashicorp/aws", "values": { "instance_class": "db.m5.2xlarge", "allocated_storage": 500 } }
+                              ]
+                            }
+                          },
+                          "resource_changes": [
+                            { "address": "aws_db_instance.db1", "type": "aws_db_instance", "name": "db1", "provider_name": "registry.terraform.io/hashicorp/aws", "change": { "actions": ["create"], "before": null, "after": { "instance_class": "db.m5.2xlarge", "allocated_storage": 500 } } },
+                            { "address": "aws_db_instance.db2", "type": "aws_db_instance", "name": "db2", "provider_name": "registry.terraform.io/hashicorp/aws", "change": { "actions": ["create"], "before": null, "after": { "instance_class": "db.m5.2xlarge", "allocated_storage": 500 } } },
+                            { "address": "aws_db_instance.db3", "type": "aws_db_instance", "name": "db3", "provider_name": "registry.terraform.io/hashicorp/aws", "change": { "actions": ["create"], "before": null, "after": { "instance_class": "db.m5.2xlarge", "allocated_storage": 500 } } },
+                            { "address": "aws_db_instance.db4", "type": "aws_db_instance", "name": "db4", "provider_name": "registry.terraform.io/hashicorp/aws", "change": { "actions": ["create"], "before": null, "after": { "instance_class": "db.m5.2xlarge", "allocated_storage": 500 } } }
+                          ]
+                        }
+                        EOF
                     '''
                 }
             }
