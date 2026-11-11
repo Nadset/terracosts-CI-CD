@@ -7,7 +7,7 @@ pipeline {
         CI_PLATFORM        = 'jenkins'
         EXECUTOR_ENGINE    = 'jenkins'
         ORGANIZATION_ID    = '019a8da2-cacd-4f66-9c2f-4d49d9051bcf'
-        PROJECT_NAME       = 'IT Project'
+        PROJECT_NAME       = 'Porjectnew'
         PROVIDER           = 'aws'
     }
     stages {
