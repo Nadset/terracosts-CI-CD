@@ -36,7 +36,7 @@ pipeline {
                         echo "Starting FinOps Gating for: ${TERRACOSTS_PROJECT} (${CLOUD_PROVIDER})"
                         echo "=========================================="
 
-                        RESPONSE=$(curl -s -w "\\n%{http_code}" -X POST "$TERRACOSTS_API_URL/api/v1/gating/evaluate" \
+                        RESPONSE=$(curl -s -w "\\n%{http_code}" -X POST "$TERRACOSTS_API_URL/api/v1/gating/estimates" \
                           -H "Authorization: Bearer $TERRACOSTS_API_KEY" \
                           -H "Content-Type: application/json" \
                           -d "$(jq -n \
