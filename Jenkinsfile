@@ -6,9 +6,9 @@ pipeline {
         FINOPS_STRICT_MODE = 'true'
         CI_PLATFORM        = 'jenkins'
         EXECUTOR_ENGINE    = 'jenkins'
-        TERRACOSTS_ORG     = 'TerraCosts Enterprise'
-        TERRACOSTS_BU      = 'BU Core Payment'
-        TERRACOSTS_PROJECT = 'My aws project'
+        TERRACOSTS_ORG     = '019a8da2-cacd-4f66-9c2f-4d49d9051bcf'
+        TERRACOSTS_BU      = 'IT Consult - BU'
+        TERRACOSTS_PROJECT = 'Nader IT Project'
         CLOUD_PROVIDER     = 'aws'
     }
     stages {
