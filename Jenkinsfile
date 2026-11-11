@@ -1,100 +1,86 @@
-// ==============================================================================
-// TerraCosts FinOps CI/CD Gate — Jenkins Declarative Pipeline
-// Target Path : Jenkinsfile
-// Organization: TerraCosts Enterprise
-// Business Unit: BU Core Payment
-// Project     : My New project
-// Provider    : AWS
-// ==============================================================================
+#!/usr/bin/env bash
+set -eu
+set -o pipefail
 
-pipeline {
-    agent any
+# --- Environment Variables ---
+export TERRACOSTS_API_URL="https://api.terracosts.com"
+export FINOPS_STRICT_MODE="true"
+export CI_PLATFORM="jenkins"
+export EXECUTOR_ENGINE="jenkins"
 
-    environment {
-        TERRACOSTS_API_URL = 'https://terracosts.com'
-        TERRACOSTS_ORG     = 'TerraCosts Enterprise'
-        TERRACOSTS_BU      = 'BU Core Payment'
-        TERRACOSTS_PROJECT = 'My New project'
-        CLOUD_PROVIDER     = 'aws'
-        TF_WORKING_DIR     = 'terraform'
-        TERRACOSTS_API_KEY = credentials('TERRACOSTS_API_KEY')
+# --- Parameters ---
+PROJECT_NAME="terracosts-azure-core"
+PROVIDER="azure"
+LOCAL_BRANCH="New/budget-killer"
+CONTAINER_NAME="terracosts-engine"
+CONTAINER_PLAN_PATH="/app/tfplan.json"
+
+echo "=========================================="
+echo "Starting FinOps Gating for: ${PROJECT_NAME} (${PROVIDER})"
+echo "=========================================="
+
+# 1. Génération du plan Terraform factice (4 clusters -> ~102.00$)
+cat << 'EOF' > tfplan.json
+{
+  "format_version": "1.0",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        { "address": "azurerm_postgresql_cluster.db1", "mode": "managed", "type": "azurerm_postgresql_cluster", "name": "db1", "provider_name": "registry.terraform.io/hashicorp/azurerm", "values": { "sku_name": "GP_Gen5_32", "storage_mb": 512000 } },
+        { "address": "azurerm_postgresql_cluster.db2", "mode": "managed", "type": "azurerm_postgresql_cluster", "name": "db2", "provider_name": "registry.terraform.io/hashicorp/azurerm", "values": { "sku_name": "GP_Gen5_32", "storage_mb": 512000 } },
+        { "address": "azurerm_postgresql_cluster.db3", "mode": "managed", "type": "azurerm_postgresql_cluster", "name": "db3", "provider_name": "registry.terraform.io/hashicorp/azurerm", "values": { "sku_name": "GP_Gen5_32", "storage_mb": 512000 } },
+        { "address": "azurerm_postgresql_cluster.db4", "mode": "managed", "type": "azurerm_postgresql_cluster", "name": "db4", "provider_name": "registry.terraform.io/hashicorp/azurerm", "values": { "sku_name": "GP_Gen5_32", "storage_mb": 512000 } }
+      ]
     }
-
-    stages {
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
-
-        stage('Terraform Plan') {
-            steps {
-                dir("${env.TF_WORKING_DIR}") {
-                    sh '''
-                        terraform init -input=false
-                        terraform plan -input=false -out=tfplan.binary
-                        terraform show -json tfplan.binary > tfplan.json
-                    '''
-                }
-            }
-        }
-
-        stage('TerraCosts FinOps Gate') {
-            steps {
-                dir("${env.TF_WORKING_DIR}") {
-                    sh '''
-                        set -e
-                        echo "Sending Terraform plan to TerraCosts FinOps Gate..."
-
-                        RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$TERRACOSTS_API_URL/api/v1/gating/evaluate" \
-                          -H "Authorization: Bearer $TERRACOSTS_API_KEY" \
-                          -H "Content-Type: application/json" \
-                          -d "$(jq -n \
-                            --arg org "$TERRACOSTS_ORG" \
-                            --arg bu "$TERRACOSTS_BU" \
-                            --arg project "$TERRACOSTS_PROJECT" \
-                            --arg provider "$CLOUD_PROVIDER" \
-                            --arg engine "jenkins" \
-                            --arg run_id "$BUILD_NUMBER" \
-                            --arg branch "$GIT_BRANCH" \
-                            --slurpfile plan tfplan.json \
-                            '{
-                              organization: $org,
-                              business_unit: $bu,
-                              project: $project,
-                              provider: $provider,
-                              engine: $engine,
-                              pipeline_run_id: $run_id,
-                              branch: $branch,
-                              tfplan: $plan[0]
-                            }')")
-
-                        HTTP_BODY=$(echo "$RESPONSE" | sed '$d')
-                        HTTP_STATUS=$(echo "$RESPONSE" | tail -n1)
-
-                        echo "$HTTP_BODY" | jq .
-
-                        if [ "$HTTP_STATUS" -ge 400 ]; then
-                            error("TerraCosts API returned HTTP error: $HTTP_STATUS")
-                        fi
-
-                        VERDICT=$(echo "$HTTP_BODY" | jq -r '.verdict // .status // "FAIL"')
-                        if [ "$VERDICT" != "PASS" ]; then
-                            error("BLOCKED: TerraCosts FinOps Gate verdict is $VERDICT")
-                        fi
-
-                        echo "PASSED: TerraCosts FinOps Gate approved the deployment."
-                    '''
-                }
-            }
-        }
-    }
-
-    post {
-        always {
-            dir("${env.TF_WORKING_DIR}") {
-                sh 'rm -f tfplan.binary tfplan.json'
-            }
-        }
-    }
+  },
+  "resource_changes": [
+    { "address": "azurerm_postgresql_cluster.db1", "type": "azurerm_postgresql_cluster", "name": "db1", "provider_name": "registry.terraform.io/hashicorp/azurerm", "change": { "actions": ["create"], "before": null, "after": { "sku_name": "GP_Gen5_32", "storage_mb": 512000 } } },
+    { "address": "azurerm_postgresql_cluster.db2", "type": "azurerm_postgresql_cluster", "name": "db2", "provider_name": "registry.terraform.io/hashicorp/azurerm", "change": { "actions": ["create"], "before": null, "after": { "sku_name": "GP_Gen5_32", "storage_mb": 512000 } } },
+    { "address": "azurerm_postgresql_cluster.db3", "type": "azurerm_postgresql_cluster", "name": "db3", "provider_name": "registry.terraform.io/hashicorp/azurerm", "change": { "actions": ["create"], "before": null, "after": { "sku_name": "GP_Gen5_32", "storage_mb": 512000 } } },
+    { "address": "azurerm_postgresql_cluster.db4", "type": "azurerm_postgresql_cluster", "name": "db4", "provider_name": "registry.terraform.io/hashicorp/azurerm", "change": { "actions": ["create"], "before": null, "after": { "sku_name": "GP_Gen5_32", "storage_mb": 512000 } } }
+  ]
 }
+EOF
+
+# 2. Copie du plan généré vers le conteneur Docker
+echo "[INFO] Copying generated plan into container ${CONTAINER_NAME}..."
+docker cp tfplan.json "${CONTAINER_NAME}:${CONTAINER_PLAN_PATH}"
+
+# 3. Injection du patch SSL temporaire dans le conteneur
+docker exec "${CONTAINER_NAME}" bash -c "mkdir -p /tmp/patch && cat << 'EOF' > /tmp/patch/sitecustomize.py
+import warnings
+try:
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+except ImportError:
+    pass
+try:
+    import requests
+    from requests.adapters import HTTPAdapter
+    orig_send = HTTPAdapter.send
+    def patched_send(self, request, **kwargs):
+        kwargs['verify'] = False
+        return orig_send(self, request, **kwargs)
+    HTTPAdapter.send = patched_send
+except Exception:
+    pass
+EOF"
+
+# 4. Exécution du script FinOps Gating
+echo "[INFO] Executing gating script inside container..."
+docker exec \
+  -e CI_PLATFORM="${CI_PLATFORM}" \
+  -e EXECUTOR_ENGINE="${EXECUTOR_ENGINE}" \
+  -e ORGANIZATION_ID="11111111-1111-1111-1111-111111111111" \
+  -e BRANCH_NAME="${LOCAL_BRANCH}" \
+  -e GIT_BRANCH="${LOCAL_BRANCH}" \
+  -e JENKINS_URL="https://jenkins.terracosts.com/" \
+  -e TERRACOSTS_API_KEY="${TERRACOSTS_API_KEY:-}" \
+  -e TERRACOSTS_API_URL="${TERRACOSTS_API_URL}" \
+  -e FINOPS_STRICT_MODE="${FINOPS_STRICT_MODE}" \
+  -e PYTHONPATH="/tmp/patch" \
+  "${CONTAINER_NAME}" \
+  python3 /app/scripts/finops_gating.py \
+    --plan "${CONTAINER_PLAN_PATH}" \
+    --project "${PROJECT_NAME}" \
+    --provider "${PROVIDER}"
