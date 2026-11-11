@@ -8,7 +8,7 @@ pipeline {
         EXECUTOR_ENGINE    = 'jenkins'
         ORGANIZATION_ID    = 'be3171ed-c4ee-41a4-b9f5-19c0dfcaf881'
         PROJECT_NAME       = 'IT Consult - Project'
-        PROVIDER           = 'aws'
+        PROVIDER           = 'azure'
     }
     stages {
         stage('Checkout') {
