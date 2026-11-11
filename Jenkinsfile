@@ -36,7 +36,7 @@ pipeline {
                         echo "Starting FinOps Gating for: ${TERRACOSTS_PROJECT} (${CLOUD_PROVIDER})"
                         echo "=========================================="
 
-                        RESPONSE=$(curl -s -w "\\n%{http_code}" -X POST "$TERRACOSTS_API_URL/api/v1/gating/estimates" \
+                        RESPONSE=$(curl -s -w "\\n%{http_code}" -X POST "$TERRACOSTS_API_URL/api/gating/evaluate" \
                           -H "Authorization: Bearer $TERRACOSTS_API_KEY" \
                           -H "Content-Type: application/json" \
                           -d "$(jq -n \
@@ -46,7 +46,7 @@ pipeline {
                             --arg provider "$CLOUD_PROVIDER" \
                             --arg engine "jenkins" \
                             --arg run_id "$BUILD_NUMBER" \
-                            --arg branch "${GIT_BRANCH:-main}" \
+                            --arg branch "${GIT_BRANCH:-origin/main}" \
                             --slurpfile plan tfplan.json \
                             '{
                               organization: $org,
