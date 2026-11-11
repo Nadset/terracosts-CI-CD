@@ -18,7 +18,7 @@ pipeline {
         }
         stage('Terraform Plan') {
             steps {
-                dir('terraform/azure') {
+                dir('terraform/aws') {
                     sh '''
                         terraform init -input=false
                         terraform plan -input=false -out=tfplan.binary
@@ -29,7 +29,7 @@ pipeline {
         }
         stage('FinOps Gating Check') {
             steps {
-                dir('terraform/azure') {
+                dir('terraform/aws') {
                     sh '''
                         echo "=========================================="
                         echo "Starting FinOps Gating for: ${PROJECT_NAME} (${PROVIDER})"
