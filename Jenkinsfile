@@ -16,7 +16,7 @@ pipeline {
         TERRACOSTS_BU      = 'IT Consult - BU'
         TERRACOSTS_PROJECT = 'Nader IT Project'
         CLOUD_PROVIDER     = 'aws'
-        TF_WORKING_DIR     = 'terraform'
+        TF_WORKING_DIR     = 'terraform/aws'
         TERRACOSTS_API_KEY = credentials('TERRACOSTS_API_KEY')
     }
 
